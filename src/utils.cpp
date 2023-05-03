@@ -159,7 +159,8 @@ double stand_getCAI(const vector<int> & rna, const vector<int> & protein) {
         }
 //        cout << i << endl;
         int x = getxPos(p, codon);
-        CAI_ans += log(codon_cai[p][x]);
+        CAI_ans += codon_cai[p][x];
+//        CAI_ans += log(codon_cai[p][x]);
 //        cout << codon_cai[p][x] << " " << log(codon_cai[p][x]) << " " << CAI_ans << endl;
     }
     cout << CAI_ans/n << endl;
@@ -186,7 +187,7 @@ double getCAI_s(const vector<int> & rna, const vector<int> & protein) {
 double stand_getCAI_s(const vector<int> & rna, const vector<int> & protein) {
 //    cout << "standard" << endl;
     int n = protein.size();
-    double CAI_ans = 1;
+    double CAI_ans = 0;
     for (int i = 0; i < n; ++i) {
         vector<int> codon(3);
 
@@ -197,8 +198,11 @@ double stand_getCAI_s(const vector<int> & rna, const vector<int> & protein) {
 //        cout << i << endl;
         int x = getxPos(p, codon);
 //        CAI_ans *= codon_cai_s[p][x];
-        CAI_ans += log(codon_cai_s[p][x]);
+        CAI_ans += codon_cai_s[p][x];
+//        cout << i << " " << codon_cai_s[p][x] << endl;
+//        CAI_ans += log(codon_cai_s[p][x]);
     }
+//    cout << CAI_ans << " " << n << endl;
     return exp(CAI_ans/n);
 }
 

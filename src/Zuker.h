@@ -805,6 +805,7 @@ inline double &Zuker::Access_M2(int a, int b, int i, int j, int x, int y) {
 
 inline int Zuker::index(int a, int b, int i, int j, int x, int y) const {
     int idx = a*n+b;
+//    cout << start_index[idx] + index_offset[idx] * (3*i+j) + n_codon[protein[b]] * x + y << endl;
     return start_index[idx] + index_offset[idx] * (3*i+j) + n_codon[protein[b]] * x + y;
 }
 

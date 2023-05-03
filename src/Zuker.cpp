@@ -1633,31 +1633,31 @@ double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int 
 double Zuker::add_interior_CAI_2(int a, int c, int x, int h, int na, int x1, int pc, int h1) const {
     if (a == c) return 0;
     double cai = codon_cai[protein[a]][x];
-    int m = abs(c-a)-1;
+//    int m = abs(c-a)-1;
     if (na == -1 && x1 == -1 && pc == -1 && h1 == -1) {
-        if (m <= 0) return cai;
-        cai += (1.0 * m);
+//        if (m <= 0)
         return cai;
+//        cai += (1.0 * m);
     } else if (pc == -1 && h1 == -1) {
         if (na != a && na != c) {
             cai += codon_cai[protein[na]][x1];
-            m -= 1;
+//            m -= 1;
         }
 
-        if (m > 0) cai += (1.0 * m);
+//        if (m > 0) cai += (1.0 * m);
         return cai;
     } else {
 
         if (na != a && na != c) {
             cai += codon_cai[protein[na]][x1];
-            m -= 1;
+//            m -= 1;
         }
         if (pc != c && pc != a && pc != na) {
             cai += codon_cai[protein[pc]][h1];
-            m -= 1;
+//            m -= 1;
         }
 
-        if (m > 0) cai += (1.0 * m);
+//        if (m > 0) cai += (1.0 * m);
         return cai;
     }
 
@@ -1666,20 +1666,19 @@ double Zuker::add_interior_CAI_2(int a, int c, int x, int h, int na, int x1, int
 double Zuker::add_CAI(int p1, int p2, int x, int x1, int dir) const {
     if (p1 == p2) return 0;
     double cai = codon_cai[protein[p1]][x];
-    if (dir == 1) {
-        int m = p2-p1-1;
-        if (m > 0) {
-            cai += (1.0 * m);
-
-        }
-    }
-    if (dir == -1) {
-        int m = p1-p2-1;
-        if (m > 0) {
-            cai += (1.0 * m);
-
-        }
-    }
+//    if (dir == 1) {
+//        int m = p2-p1-1;
+//        if (m > 0) {
+//            cai += (1.0 * m);
+//        }
+//    }
+//    if (dir == -1) {
+//        int m = p1-p2-1;
+//        if (m > 0) {
+//            cai += (1.0 * m);
+//
+//        }
+//    }
     return cai;
 }
 
@@ -1694,13 +1693,13 @@ int Zuker::multi_loop(int a, int b, int i, int j, int x, int y, int pa, int pb, 
             }
         }
     }
-    if (a+1 == b-1 && i == 2 && j == 0) {
-        int pna = protein[a+1];
-        for (int x1 = 0; x1 < n_codon_an; ++x1) {
-            multi_loop = min(multi_loop, TM0[index(a+1,b-1,0,2,x1,x1)]); //, idx_t + 6*x1 + x1
-        }
-
-    }
+//    if (a+1 == b-1 && i == 2 && j == 0) {
+//        int pna = protein[a+1];
+//        for (int x1 = 0; x1 < n_codon_an; ++x1) {
+//            multi_loop = min(multi_loop, TM0[index(a+1,b-1,0,2,x1,x1)]); //, idx_t + 6*x1 + x1
+//        }
+//
+//    }
     if (a < b-1) {
         int pna = protein[a+1];
         int ppb = protein[b-1];
@@ -1716,16 +1715,16 @@ int Zuker::multi_loop(int a, int b, int i, int j, int x, int y, int pa, int pb, 
         }
 
     }
-    if (a == b-1) {
-        if (a == 2 && j >= 1) {
-            multi_loop = min(multi_loop, TM0[index(a+1,b,0,j-1,y,y)]); //
-        }
-
-        if (i <= 1 && j == 0) {
-            multi_loop = min(multi_loop, TM0[index(a,b-1,i+1,2,x,x)]);//
-        }
-
-    }
+//    if (a == b-1) {
+//        if (a == 2 && j >= 1) {
+//            multi_loop = min(multi_loop, TM0[index(a+1,b,0,j-1,y,y)]); //
+//        }
+//
+//        if (i <= 1 && j == 0) {
+//            multi_loop = min(multi_loop, TM0[index(a,b-1,i+1,2,x,x)]);//
+//        }
+//
+//    }
     if (a < b && i <= 1 && j >= 1) {
 
         multi_loop = min(multi_loop, TM0[index(a,b,i+1,j-1,x,y)]); //index(a,b,i+1,j-1,x,y)
@@ -1760,20 +1759,22 @@ double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, in
         }
 //        fout <<  "multi-ret: " << "1 " << multi_loop << endl;
     }
-    if (a+1 == b-1 && i == 2 && j == 0) {
-        int pna = protein[a+1];
-//        int idx_t = ;
-        for (int x1 = 0; x1 < n_codon_an; ++x1) {
-            temp_e = TM[index(a+1,b-1,0,2,x1,x1)] + (lambda-1)*(codon_cai[pa][x] + codon_cai[pb][y]); //idx_t + 6*x1 + x1
-            if (multi_loop > temp_e) {
-                multi_loop = temp_e;
-                temp = {a+1,b-1,0,2,x1,x1};
-                mfe = TM2[index(a+1,b-1,0,2,x1,x1)];
-                cai = TM_CAI[index(a+1,b-1,0,2,x1,x1)] + (lambda-1)*(codon_cai[pa][x] + codon_cai[pb][y]);
-            }
-        }
-//        fout <<  "multi-ret: " << "2 " << multi_loop << endl;
-    }
+//    if (a+1 == b-1 && i == 2 && j == 0) {
+////        cout << 2 << " " << a << " " << b << " " << 0 << " " << 2 << " " << x << " " << y << endl;
+//        int pna = protein[a+1];
+////        int idx_t = ;
+//        for (int x1 = 0; x1 < n_codon_an; ++x1) {
+//            temp_e = TM[index(a+1,b-1,0,2,x1,x1)] + (lambda-1)*(codon_cai[pa][x] + codon_cai[pb][y]); //idx_t + 6*x1 + x1
+//            cout << 3 << " " << TM[index(a+1,b-1,0,2,x1,x1)] << endl;
+//            if (multi_loop > temp_e) {
+//                multi_loop = temp_e;
+//                temp = {a+1,b-1,0,2,x1,x1};
+//                mfe = TM2[index(a+1,b-1,0,2,x1,x1)];
+//                cai = TM_CAI[index(a+1,b-1,0,2,x1,x1)] + (lambda-1)*(codon_cai[pa][x] + codon_cai[pb][y]);
+//            }
+//        }
+////        fout <<  "multi-ret: " << "2 " << multi_loop << endl;
+//    }
     if (a < b-1) {
         int pna = protein[a+1];
         int ppb = protein[b-1];
@@ -1803,28 +1804,34 @@ double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, in
         }
 //        fout <<  "multi-ret: " << "2 " << multi_loop << endl;
     }
-    if (a == b-1) {
-        if (i == 2 && j >= 1) {
-            temp_e =  TM[index(a+1,b,0,j-1,y,y)] + (lambda-1)*codon_cai[pa][x];
-            if (multi_loop > temp_e) {
-                multi_loop = temp_e;
-                temp = {a+1,b,0,j-1,y,y};
-                mfe = TM2[index(a+1,b,0,j-1,y,y)];
-                cai = TM_CAI[index(a+1,b,0,j-1,y,y)] + (lambda-1)*codon_cai[pa][x];
-            }
-        }
-
-        if (i <= 1 && j == 0) {
-            temp_e = TM[index(a,b-1,i+1,2,x,x)] + (lambda-1)*codon_cai[pb][y];
-            if (multi_loop > temp_e) {
-                multi_loop = temp_e;
-                temp = {a,b-1,i+1,2,x,x};
-                mfe = TM2[index(a,b-1,i+1,2,x,x)];
-                cai = TM_CAI[index(a,b-1,i+1,2,x,x)] + (lambda-1)*codon_cai[pb][y];
-            }
-        }
-//        fout <<  "multi-ret: " << "3 " << multi_loop << endl;
-    }
+//    if (a == b-1) {
+//
+////        cout << 1 << " " << a << " " << b << " " << 0 << " " << j-1 << " " << x << " " << y << endl;
+//
+//        if (i == 2 && j >= 1) {
+//            temp_e =  TM[index(a+1,b,0,j-1,y,y)] + (lambda-1)*codon_cai[pa][x];
+//            cout << 4 << " " << TM[index(a+1,b,0,j-1,y,y)] << endl;
+//            if (multi_loop > temp_e) {
+//                multi_loop = temp_e;
+//                temp = {a+1,b,0,j-1,y,y};
+//                mfe = TM2[index(a+1,b,0,j-1,y,y)];
+//                cai = TM_CAI[index(a+1,b,0,j-1,y,y)] + (lambda-1)*codon_cai[pa][x];
+//            }
+//        }
+//
+//        if (i <= 1 && j == 0) {
+//            temp_e = TM[index(a,b-1,i+1,2,x,x)] + (lambda-1)*codon_cai[pb][y];
+//            cout << 5 << " " << TM[index(a,b-1,i+1,2,x,x)] << endl;
+//            if (multi_loop > temp_e) {
+//                multi_loop = temp_e;
+//                temp = {a,b-1,i+1,2,x,x};
+//                mfe = TM2[index(a,b-1,i+1,2,x,x)];
+//                cai = TM_CAI[index(a,b-1,i+1,2,x,x)] + (lambda-1)*codon_cai[pb][y];
+//            }
+//        }
+////        cout << temp_e << endl;
+////        fout <<  "multi-ret: " << "3 " << multi_loop << endl;
+//    }
     if (a < b && i <= 1 && j >= 1) {
         temp_e = TM[index(a,b,i+1,j-1,x,y)];
         if (multi_loop > temp_e) {
@@ -1835,6 +1842,7 @@ double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, in
         }
 //        fout <<  "multi-ret: " << "4 " << multi_loop << endl;
     }
+
     multi_loop = multi_loop + lambda*(AU[nucleotides[pa][x][i]][nucleotides[pb][y][j]] + ML_closing + ML_intern);
 
 //    fout <<  "multi-ret: " << multi_loop << endl;
@@ -1876,10 +1884,11 @@ int Zuker::calculate_M(int a, int b, int i, int j, int x, int y) { //vector<int>
 
     if (i == 2) {
 
-        if (a + 1 == b) {
-            min_energy = min(min_energy, Access_M(a+1,b,0,j,y,y) + ML_BASE);
-        }
-        else {
+//        if (a + 1 == b) {
+//            min_energy = min(min_energy, Access_M(a+1,b,0,j,y,y) + ML_BASE);
+//        }
+//        else
+        {
             for (int x1 = 0; x1 < n_codon_an; ++x1) {
                 min_energy = min(min_energy, Access_M(a + 1, b, 0, j, x1, y) + ML_BASE); //, idx_t + 6*x1
             }
@@ -1900,10 +1909,11 @@ int Zuker::calculate_M(int a, int b, int i, int j, int x, int y) { //vector<int>
     }
 
     if (j == 0) {
-        if (a == b - 1) {
-            min_energy = min(min_energy, Access_M(a,b-1,i,2,x,x) + ML_BASE);
-        }
-        else {
+//        if (a == b - 1) {
+//            min_energy = min(min_energy, Access_M(a,b-1,i,2,x,x) + ML_BASE);
+//        }
+//        else
+        {
             for (int y1 = 0; y1 < n_codon_bp; ++y1) {
                 min_energy = min(min_energy, Access_M(a, b - 1, i, 2, x, y1) + ML_BASE); // idx_t + y1
             }
@@ -1935,9 +1945,10 @@ int Zuker::calculate_M(int a, int b, int i, int j, int x, int y) { //vector<int>
                 bi_energy = min(bi_energy, Access_M(a,c,i,i1-1,x,hx) + Access_M(c,b,i1,j,hx,y)); //, idx_1 + hx //, idx_2 + 6*hx
             }
             else {
-                if (a == c-1) {
-                    bi_energy = min(bi_energy, Access_M(a,c-1,i,2,x,x) + Access_M(c,b,i1,j,hx,y));
-                } else {
+//                if (a == c-1) {
+//                    bi_energy = min(bi_energy, Access_M(a,c-1,i,2,x,x) + Access_M(c,b,i1,j,hx,y));
+//                } else
+                {
                     int n_codon_cp = n_codon[protein[c-1]];
                     for (int ky = 0; ky < n_codon_cp; ++ky) {
                         bi_energy = min(bi_energy, Access_M(a,c-1,i,2,x,ky) + Access_M(c,b,i1,j,hx,y)); //, idx_3 + ky //, idx_4 + 6*hx
@@ -3893,24 +3904,15 @@ void Zuker::traceback_B2(double lambda) {
                     }
 
                     assign(nucle_seq,nuc,li+1);
-//                    cout << str << endl;
-//                    cout << eij << " " << hairpin+cai << " " << eij - (hairpin+cai) << endl;
-//                    cout << "mfe: " << hairpin << " " << hairpin/lambda << ",cai: " << cai << " " << cai/(lambda-1) << endl;
                     assert(compare(eij, hairpin+cai));
                     goto OUTLOOP;
                 } else {
                     // {l,xi,xi_,_yj,yj,a,x,b,y-1}
-//                    for (auto v: values) {
-//                        cout << v << " ";
-//                    }
-//                    cout << endl;
+
                     l = values[0], xi_ = values[2], _yj = values[3], a1 = values[5], x1 = values[6] , b1 = values[7], y1 = values[8];
                     energy = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1) + (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a1,x1,b1,y1);
                     nucle_seq[li+1] = xi_;
                     nucle_seq[rj-1] = _yj;
-//                    cout << "mfe: " << lambda*hairpin_loop(xi,yj,xi_,_yj,l-1) << endl;
-//                    cout << "cai: " << (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a1,x1,b1,y1) << endl;
-//                    cout << eij << " " << energy << " " << eij-energy << " " << endl;
                     assert(compare(eij, energy));
                     goto OUTLOOP;
                 }
@@ -3993,12 +3995,6 @@ void Zuker::traceback_B2(double lambda) {
                 nucle_seq[ld] = kj;
 
                 a = c, b = d, i = i1, j = j1, x = hx, y = ky;
-//                cout << "mfe: " << E2[index(c, d, i1, j1, hx, ky)] + lambda * bulge_loop(xi, yj, hi, kj, ll) << endl;
-////
-//                cout << "cai: " << E_CAI[index(c, d, i1, j1, hx, ky)] + + (lambda-1)*(add_CAI(a,c,x,hx,1) + add_CAI(b,d,y,ky,-1)) << endl;
-//////
-//////
-//                cout << eij << " " << energy << " " << eij-energy << endl;
                 assert(compare(eij, energy));
                 goto repeat;
 //                }
@@ -4256,7 +4252,8 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
 
 
 
-//                debug <<    "Z - a: " << a << ",b: " << b << ",i: " << i << ",j: " << j << ",x: " << x << ",y: " << y << ",t: " << t << ",cai: " << cai/(lambda-1) << ",pc: " << codon_cai[pb][y] << endl;
+//                debug <<    "Z - " << a << ", " << b << " " << i << ", " << j << ", " << x << ", " << y << ",index: " << index(a,b,i,j,x,y) << endl;
+//                << ",cai: " << cai/(lambda-1) << ",pc: " << codon_cai[pb][y] << endl;
 //                debug <<    "Z - l: " << sigma(a,i) << ",r: " << sigma(b,j) << ",L: " << nucleotides[protein[a]][x][i] << ",R: " << nucleotides[protein[b]][y][j] << ",ret: " << mfe/lambda << ",t: " << t << endl;
 //                Zout <<    "Z - l: " << sigma(a,i) << ",r: " << sigma(b,j) << ",L: " << nucleotides[protein[a]][x][i] << ",R: " << nucleotides[protein[b]][y][j] << ",ret: " << ret << endl;
                 Access_O(idx) = ret;
@@ -4380,15 +4377,13 @@ void Zuker::calculate_CAI_E(ostream & fout, double lambda) {
                         Access_EB(a,b,i,j,x,y) = t;
                         E_bt[index(a,b,i,j,x,y)] = temp;
 
-//                        cout <<  "E - a: " << a << ",b: " << b << ",i: " << i << ",j: " << j << ",x: " << x << ",y: " << y << ",t: " << t << endl;
+                        fout <<  "E - " << "(" << a << ", " << i << ") (" << b << ", " << j << ") (" << x << ", " << y << ") ,index: " << index(a,b,i,j,x,y) << endl;
 
 //                        cout << E1[index(a,b,i,j,x,y)]  << " " << E2[index(a,b,i,j,x,y)] + E_CAI[index(a,b,i,j,x,y)] << endl;
 
 //
 
                         assert(compare(E1[index(a,b,i,j,x,y)], E2[index(a,b,i,j,x,y)] + E_CAI[index(a,b,i,j,x,y)], 0.001));
-
-
 
 
                         calculate_CAI_M(a,b,i,j,x,y,lambda,fout);
@@ -4404,28 +4399,28 @@ double Zuker::add_hairpin_CAI_2(int a, int b, int x, int y, int a1, int x1, int 
     double cai = 0;
     cai = codon_cai[protein[a]][x];
     if (b != a) cai += codon_cai[protein[b]][y];
-    int m = b-a-1;
+//    int m = b-a-1;
 //    int m = b-a;
     if (a1 == -1 && x1 == -1 && b1 == -1 && y1 == -1) {
-        if (m > 0) cai += m;
+//        if (m > 0) cai += m;
         return cai;
     } else if (b1 == -1 && y1 == -1) {
         if (a1 != a && a1 != b) {
             cai += codon_cai[protein[a1]][x1];
-            m -= 1;
+//            m -= 1;
         }
-        if (m > 0) cai += m;
+//        if (m > 0) cai += m;
         return cai;
     } else {
         if (a1 != a && a1 != b) {
             cai += codon_cai[protein[a1]][x1];
-            m -= 1;
+//            m -= 1;
         }
         if (b1 != a && b1 != b && b1 != a1) {
             cai += codon_cai[protein[b1]][y1];
-            m -= 1;
+//            m -= 1;
         }
-        if (m > 0) cai += m;
+//        if (m > 0) cai += m;
         return cai;
 
     }
@@ -4535,15 +4530,16 @@ void Zuker::calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lam
                 }
             }
         }
-        if (a + 1 == b) {
-            temp_e = Access_M1(a+1,b,0,j,y,y) + lambda*ML_BASE + (lambda-1)*codon_cai[pa][x];
-            if (min_energy > temp_e) {
-                min_energy = temp_e;
-                temp2 = {y};
-                mfe = Access_M2(a+1,b,0,j,y,y) + lambda*ML_BASE;
-                cai = M_CAI[index(a+1,b,0,j,y,y)] + (lambda-1)*codon_cai[pa][x];
-            }
-        }
+//        if (a + 1 == b) {
+//            temp_e = Access_M1(a+1,b,0,j,y,y) + lambda*ML_BASE + (lambda-1)*codon_cai[pa][x];
+//            cout << 1 << " " << Access_M1(a+1,b,0,j,y,y) << endl;
+//            if (min_energy > temp_e) {
+//                min_energy = temp_e;
+//                temp2 = {y};
+//                mfe = Access_M2(a+1,b,0,j,y,y) + lambda*ML_BASE;
+//                cai = M_CAI[index(a+1,b,0,j,y,y)] + (lambda-1)*codon_cai[pa][x];
+//            }
+//        }
         if (greaterThan(energy, min_energy)) {
             energy = min_energy;
             temp = temp2;
@@ -4579,15 +4575,16 @@ void Zuker::calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lam
                 }
             }
         }
-        if (a == b - 1) {
-            temp_e = Access_M1(a,b-1,i,2,x,x) + lambda*ML_BASE + (lambda-1)*codon_cai[pb][y];
-            if (min_energy > temp_e) {
-                min_energy = temp_e;
-                temp2 = {x};
-                mfe = Access_M2(a,b-1,i,2,x,x) + lambda*ML_BASE;
-                cai = M_CAI[index(a,b-1,i,2,x,x)] + (lambda-1)*codon_cai[pb][y];
-            }
-        }
+//        if (a == b - 1) {
+//            temp_e = Access_M1(a,b-1,i,2,x,x) + lambda*ML_BASE + (lambda-1)*codon_cai[pb][y];
+//            cout << 2 << " " << Access_M1(a,b-1,i,2,x,x) << endl;
+//            if (min_energy > temp_e) {
+//                min_energy = temp_e;
+//                temp2 = {x};
+//                mfe = Access_M2(a,b-1,i,2,x,x) + lambda*ML_BASE;
+//                cai = M_CAI[index(a,b-1,i,2,x,x)] + (lambda-1)*codon_cai[pb][y];
+//            }
+//        }
         if (greaterThan(energy, min_energy)) {
             energy = min_energy;
             temp = temp2;
@@ -4595,6 +4592,9 @@ void Zuker::calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lam
         }
 //         fout << "m: " << 5 << " " << min_energy << endl;
     }
+//    if (a == b-1) {
+//        cout << a << " " << b << " " << i << " " << j << endl;
+//    }
 
     // bifurication
 
@@ -4618,16 +4618,18 @@ void Zuker::calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lam
 
             }
             else {
-                if (a == c-1) {
-                    temp_e = Access_M1(a,c-1,i,2,x,x) + Access_M1(c,b,i1,j,hx,y); //, idx_3 + ky //, idx_4 + 6*hx
-                    if (bi_energy > temp_e) {
-                        bi_energy = temp_e;
-                        bi_temp = {c-1,2,x,c,i1,hx};
-                        bi_mfe = Access_M2(a,c-1,i,2,x,x) + Access_M2(c,b,i1,j,hx,y);
-                        bi_cai = M_CAI[index(a,c-1,i,2,x,x)] + M_CAI[index(c,b,i1,j,hx,y)];
-
-                    }
-                } else {
+//                if (a == c-1) {
+//                    temp_e = Access_M1(a,c-1,i,2,x,x) + Access_M1(c,b,i1,j,hx,y); //, idx_3 + ky //, idx_4 + 6*hx
+//                    cout << 1 << " " << Access_M1(a,c-1,i,2,x,x) << endl;
+//                    if (bi_energy > temp_e) {
+//                        bi_energy = temp_e;
+//                        bi_temp = {c-1,2,x,c,i1,hx};
+//                        bi_mfe = Access_M2(a,c-1,i,2,x,x) + Access_M2(c,b,i1,j,hx,y);
+//                        bi_cai = M_CAI[index(a,c-1,i,2,x,x)] + M_CAI[index(c,b,i1,j,hx,y)];
+//
+//                    }
+//                } else
+                {
                     int n_codon_cp = n_codon[protein[c-1]];
                     for (int ky = 0; ky < n_codon_cp; ++ky) {
 
@@ -4800,6 +4802,7 @@ void Zuker::lambda_swipe_2(double threshold, ostream &fout, string & outfile) {
 
         }
         if (!compare(left_cai, right_cai) && !compare(left_mfe, right_mfe) && !compare(left_lambda,right_lambda,threshold)) {
+            cout << "lamda diff: " << right_lambda-left_lambda << endl;
             double m = (left_lambda + right_lambda) / 2;
             lambda.push({left_lambda, m});
             lambda.push({m, right_lambda});
@@ -5243,7 +5246,6 @@ void Zuker::get_rna_cai(string & rna) {
 }
 
 int Zuker::fill_rna(std::string &rna, int index) {
-//    cout << "p: " << index/3 << endl;
     int l0, l1, l2;
     if (index % 3 == 0) {
         l0 = nucle_seq[index];
@@ -5260,7 +5262,7 @@ int Zuker::fill_rna(std::string &rna, int index) {
     }
     int pi = protein[index/3];
     int n_codon_pi = n_codon[pi];
-    double max_cai = 0;
+    double max_cai = -INF;
     int idx = 0;
     // all three nucleotides in codon are specified
     if (l0 >=0 && l1 >= 0 && l2 >=0) {

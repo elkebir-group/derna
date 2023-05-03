@@ -569,48 +569,71 @@ PUBLIC double max_codon_cai[20][6][16];
 //};
 
 double codon_usage[20][6] = {
-        // A: GCU,GCC,GCA,GCG
-        {0.26,0.40,0.23,0.11,0,0},
-        // R: CGU,CGC,CGA,CGG,AGA,AGG
-        {0.08,0.19,0.11,0.21,0.20,0.20},
-        // N: AAU,AAC
-        {0.46,0.54,0,0,0,0},
-        // D: GAU,GAC
-        {0.46,0.54,0,0,0,0},
-        // C: UGU,UGC
-        {0.45,0.55,0,0,0,0},
-        // Q: CAA,CAG
-        {0.25,0.75,0,0,0,0},
-        // E: GAA,GAG
-        {0.42,0.58,0,0,0,0},
-        // G: GGU,GGC,GGA,GGG
-        {0.16,0.34,0.25,0.25,0,0},
-        // H: CAU,CAC
-        {0.41,0.59,0,0,0,0},
-        // M: AUG
-        {1.00,0,0,0,0,0},
-        // I: AUU,AUC,AUA
-        {0.36,0.48,0.16,0,0,0},
-        // L: CUU,CUC,CUA,CUG,UUA,UUG
-        {0.13,0.20,0.07,0.41,0.07,0.13},
-        // K: AAA,AAG
-        {0.42,0.58,0,0,0,0},
-        // F: UUU,UUC
-        {0.45,0.55,0,0,0,0},
-        // P: CCU,CCC,CCA,CCG
-        {0.28,0.33,0.27,0.11,0,0},
-        // S: UCU,UCC,UCA,UCG,AGU,AGC
-        {0.18,0.22,0.15,0.06,0.15,0.24},
-        // T: ACU,ACC,ACA,ACG
-        {0.24,0.36,0.28,0.12,0,0},
-        // W: UGG
-        {1.00,0,0,0,0,0},
-        // Y: UAU,UAC
-        {0.43,0.57,0,0,0,0},
-        // V: GUU,GUC,GUA,GUG
-        {0.18,0.24,0.11,0.47,0,0},
-
+        {18.4 ,27.7 ,15.8 ,7.4 ,0 ,0 },
+        {4.5 ,10.4 ,6.2 ,11.4 ,12.2 ,12.0 },
+        {17.0 ,19.1 ,0 ,0 ,0 ,0 },
+        {21.8 ,25.1 ,0 ,0 ,0 ,0 },
+        {10.6 ,12.6 ,0 ,0 ,0 ,0 },
+        {12.3 ,34.2 ,0 ,0 ,0 ,0 },
+        {29.0 ,39.6 ,0 ,0 ,0 ,0 },
+        {10.8 ,22.2 ,16.5 ,16.5 ,0 ,0 },
+        {10.9 ,15.1 ,0 ,0 ,0 ,0 },
+        {22.0 ,0 ,0 ,0 ,0 ,0 },
+        {16.0 ,20.8 ,7.5 ,0 ,0 ,0 },
+        {13.2 ,19.6 ,7.2 ,39.6 ,7.7 ,12.9 },
+        {24.4 ,31.9 ,0 ,0 ,0 ,0 },
+        {17.6 ,20.3 ,0 ,0 ,0 ,0 },
+        {17.5 ,19.8 ,16.9 ,6.9 ,0 ,0 },
+        {15.2 ,17.7 ,12.2 ,4.4 ,12.1 ,19.5 },
+        {13.1 ,18.9 ,15.1 ,6.1 ,0 ,0 },
+        {13.2 ,0 ,0 ,0 ,0 ,0 },
+        {12.2 ,15.3 ,0 ,0 ,0 ,0 },
+        {11.0 ,14.5 ,7.1 ,28.1 ,0 ,0 },
 };
+
+//double codon_usage[20][6] = {
+//        // A: GCU,GCC,GCA,GCG
+//        {0.26,0.40,0.23,0.11,0,0},
+//        // R: CGU,CGC,CGA,CGG,AGA,AGG
+//        {0.08,0.19,0.11,0.21,0.20,0.20},
+//        // N: AAU,AAC
+//        {0.46,0.54,0,0,0,0},
+//        // D: GAU,GAC
+//        {0.46,0.54,0,0,0,0},
+//        // C: UGU,UGC
+//        {0.45,0.55,0,0,0,0},
+//        // Q: CAA,CAG
+//        {0.25,0.75,0,0,0,0},
+//        // E: GAA,GAG
+//        {0.42,0.58,0,0,0,0},
+//        // G: GGU,GGC,GGA,GGG
+//        {0.16,0.34,0.25,0.25,0,0},
+//        // H: CAU,CAC
+//        {0.41,0.59,0,0,0,0},
+//        // M: AUG
+//        {1.00,0,0,0,0,0},
+//        // I: AUU,AUC,AUA
+//        {0.36,0.48,0.16,0,0,0},
+//        // L: CUU,CUC,CUA,CUG,UUA,UUG
+//        {0.13,0.20,0.07,0.41,0.07,0.13},
+//        // K: AAA,AAG
+//        {0.42,0.58,0,0,0,0},
+//        // F: UUU,UUC
+//        {0.45,0.55,0,0,0,0},
+//        // P: CCU,CCC,CCA,CCG
+//        {0.28,0.33,0.27,0.11,0,0},
+//        // S: UCU,UCC,UCA,UCG,AGU,AGC
+//        {0.18,0.22,0.15,0.06,0.15,0.24},
+//        // T: ACU,ACC,ACA,ACG
+//        {0.24,0.36,0.28,0.12,0,0},
+//        // W: UGG
+//        {1.00,0,0,0,0,0},
+//        // Y: UAU,UAC
+//        {0.43,0.57,0,0,0,0},
+//        // V: GUU,GUC,GUA,GUG
+//        {0.18,0.24,0.11,0.47,0,0},
+//
+//};
 
 PUBLIC int max_cai_pos[20] = {1,3,1,1,1,1,1,1,1,0,1,3,1,1,1,5,1,0,1,3};
 
@@ -1677,11 +1700,15 @@ void scale_params(const string & file,  double temp) {
 //                *max_element(codon_usage[i], codon_usage[i] + 6);
         for (j = 0; j < 6; j++) {
             if (j < n_codon[i] && codon_usage[i][j] == 0) {
-                codon_cai[i][j] = (codon_usage[i][j] + EPSILON)/max_c; //*100.0
-                codon_cai_s[i][j] = (codon_usage[i][j] + EPSILON)/max_c;
+                codon_cai[i][j] = log((codon_usage[i][j] + EPSILON)/max_c); //*100.0
+                codon_cai_s[i][j] = log((codon_usage[i][j] + EPSILON)/max_c);
+            } else if (codon_usage[i][j] == 0) {
+                codon_cai[i][j] = -INF; //*100.0
+                codon_cai_s[i][j] = -INF;
+
             } else {
-                codon_cai[i][j] = codon_usage[i][j]/max_c; //*100.0
-                codon_cai_s[i][j] = codon_usage[i][j]/max_c;
+                codon_cai[i][j] = log(codon_usage[i][j]/max_c); //*100.0
+                codon_cai_s[i][j] = log(codon_usage[i][j]/max_c);
             }
         }
     }
@@ -1698,7 +1725,7 @@ void scale_params(const string & file,  double temp) {
     for (i = 0; i < 20; i++) {
         for (j = 0; j < 3; j++) {
             for (k = 0; k < 16; k++) {
-                double m = 0;
+                double m = -INF;
                 for (l = 0; l < 6; l++) {
                     if (nucleotides[i][l][j] == k) {
                         m = max(m, codon_cai[i][l]);
@@ -1709,7 +1736,7 @@ void scale_params(const string & file,  double temp) {
         }
         for (j = 3; j < 6; j++) {
             for (k = 0; k < 16; k++) {
-                double m = 0;
+                double m = -INF;
                 for (l = 0; l < 6; l++) {
 
                     switch (j) {

@@ -25,7 +25,7 @@ int main(int argc, char *argv[]) {
     int model, mode;
     double incr = inf, lambda = inf, threshold = 0.001;
     int g = inf;
-    int const default_argc = 11;
+    int const default_argc = 9;
 
 
 //    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15086.fasta", "-o", "res_zuker_P15086.txt", "-m", "1", "-s", "2", "-l", "0.06348505"};
@@ -33,11 +33,12 @@ int main(int argc, char *argv[]) {
 //
 //    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P0DTC2.fasta", "-o", "res_zuker_P0DTC2.txt", "-m", "1", "-s", "2", "-l", "0.00001"};
 
-    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q14442.fasta", "-o", "res_zuker_Q14442.txt", "-m", "1", "-s", "2", "-l", "0.5"};
+//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q14442.fasta", "-o", "res_zuker_Q14442.txt", "-m", "1", "-s", "2", "-l", "0.99999"};
 
 //    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q8NC38.fasta", "-o", "res_zuker_Q8NC38.txt", "-m", "1", "-s", "2", "-l", "0.00005"};
 //    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q92734.fasta", "-o", "res_zuker_Q92734.txt", "-m", "1", "-s", "2", "-l", "0.00005"};
 //    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15421.fasta", "-o", "res_zuker_P15421.txt", "-m", "1", "-s", "2", "-l", "0.00005"};
+    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q8IW19.fasta", "-o", "res_zuker_Q8IW19.txt", "-m", "1", "-s", "1"};
 //        const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15421.fasta", "-o", "res_P15421_swipe.txt", "-m", "1", "-s", "3", "-O", "zuker_P15421_swipe.csv", "-l", "0.0", "-a", "0.04"};
 
 
