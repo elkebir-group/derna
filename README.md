@@ -49,7 +49,23 @@ rna: input rna file path for eval model
 
 ### Fix $\lambda$ 
 
-`./derna -i <input> -o <output> -m 1 -s 2 -l 0.5`
+`$ ./derna -i ../data/uniprotSeq/P15421.fasta -o P15421.txt -m 1 -l 0.05 -s 2`
+
+`$ cat P15421.txt`
+
+```
+protein sequence: MYGKIIFVLLLSGIVSISASSTTGVAMHTSTSSSVTKSYISSQTNGITLINWWAMARVIFEVMLVVVGMIILISYCIR
+lambda: 0.05
+Zuker CAI
+Energy: -7.21833
+Time taken by DP is : 21sec
+lambda: 0.05,O: -721.833,mfe: -14830,cai: -20.702,combined: -721.833
+zuker cai bp: (((((((((((.((((...(((((((((((((((((((((....))))).)))))).)))))))))).)))).)))))))))))((((((....((((((((.(((.((((((((((.(((((((((.(((((.((((((((((((((.((((((((((((....)))))).)))))))))))))))))))).))))))))))))))))))))))))))))))))))))))))),size: 234
+zuker rna: AUGUAUGGCAAGAUCAUXUUCGUGCUGCUGCUGAGUGGAAUXXUUUCCAXCUCAGCXAGCAGCACGACUGGUGUUGCCAUGCAUACGAGUXXXXGCAGUAGCXUGAXUAAGAGUUAUXUAUCCUCACXGACCAACGGCAUCACCUUGAXAAAUUGGUGGGCGXXGGCCCGCXUAAUUUUCGAGGUGAUGCUGGUGGUCGUGGGGAUGAUAAUUCUUAUCAGCUACUGCAUUCGU.size: 234
+zuker cai rna: AUGUAUGGCAAGAUCAUCUUCGUGCUGCUGCUGAGUGGAAUCGUUUCCAUCUCAGCCAGCAGCACGACUGGUGUUGCCAUGCAUACGAGUACCAGCAGUAGCGUGACUAAGAGUUAUAUAUCCUCACAGACCAACGGCAUCACCUUGAUAAAUUGGUGGGCGAUGGCCCGCGUAAUUUUCGAGGUGAUGCUGGUGGUCGUGGGGAUGAUAAUUCUUAUCAGCUACUGCAUUCGU.size: 234
+Codon Adaptation Index: 0.766891
+Minimum Free Energy: -148.3
+```
 
 ### Sweep 
 
