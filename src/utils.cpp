@@ -6,7 +6,6 @@
 #include "ZukerAlgorithm.h"
 #include "NussinovAlgorithm.h"
 #include <iostream>
-#include <fstream>
 #include <cassert>
 #include <vector>
 #include <algorithm>
@@ -111,13 +110,13 @@ int m(int n, int a, int b, int i, int j, int x) { //
 }
 
 void transform2num(vector<int> & target, string s) {
-    for (int i = 0; i < s.size(); i++) {
+    for (int i = 0; i < (int)s.size(); i++) {
         target[i] = n_index(s[i]);
     }
 }
 
 string num2String(vector<int> & num) {
-    int size = num.size();
+    int size = (int)num.size();
     string s(size,'.');
     for (int i = 0; i < size; i++) {
         s[i] = to_char[num[i]];
@@ -126,18 +125,16 @@ string num2String(vector<int> & num) {
 }
 
 double getCAI(const vector<int> & rna, const vector<int> & protein) {
-    int n = protein.size();
-//    cout << n << " " << rna.size() << endl;
-    assert(3* n == rna.size());
+    int n = (int)protein.size();
+
     double CAI_ans = 0;
     for (int i = 0; i < n; ++i) {
         vector<int> codon(3);
         int p = protein[i];
         for (int j = 0; j <= 2; j++) {
-            assert(3*i+j < rna.size());
             codon[j] = rna[3*i+j];
         }
-//        cout << i << endl;
+
         int x = getxPos(p, codon);
 
         CAI_ans += codon_cai[p][x];
@@ -149,7 +146,7 @@ double getCAI(const vector<int> & rna, const vector<int> & protein) {
 }
 
 double stand_getCAI(const vector<int> & rna, const vector<int> & protein) {
-    int n = protein.size();
+    int n = (int)protein.size();
     double CAI_ans = 0;
     for (int i = 0; i < n; ++i) {
         vector<int> codon(3);
@@ -168,7 +165,7 @@ double stand_getCAI(const vector<int> & rna, const vector<int> & protein) {
 }
 
 double getCAI_s(const vector<int> & rna, const vector<int> & protein) {
-    int n = protein.size();
+    int n = (int)protein.size();
     double CAI_ans = 0;
     for (int i = 0; i < n; ++i) {
         vector<int> codon(3);
@@ -186,7 +183,7 @@ double getCAI_s(const vector<int> & rna, const vector<int> & protein) {
 
 double stand_getCAI_s(const vector<int> & rna, const vector<int> & protein) {
 //    cout << "standard" << endl;
-    int n = protein.size();
+    int n = (int)protein.size();
     double CAI_ans = 0;
     for (int i = 0; i < n; ++i) {
         vector<int> codon(3);
@@ -206,7 +203,7 @@ double stand_getCAI_s(const vector<int> & rna, const vector<int> & protein) {
     return exp(CAI_ans/n);
 }
 
-const int getxPos(int p, vector<int> & codon) {
+int getxPos(int p, vector<int> & codon) {
     for (int i = 0; i < 6; ++i) {
         vector<int> temp(begin(nucleotides[p][i]), end(nucleotides[p][i]));
         if (temp == codon) {
@@ -236,7 +233,7 @@ int to_int(char a) {
 }
 
 void char2num(vector<int>& target, string & s) {
-    for (int i = 0; i < s.size(); ++i) {
+    for (int i = 0; i < (int)s.size(); ++i) {
 //        cout << i << endl;
         target[i] = to_int(s[i]);
     }
@@ -245,15 +242,15 @@ void char2num(vector<int>& target, string & s) {
 
 void write_csv(string filename, const vector<pair<string, vector<double>>> & dataset) {
     ofstream output(filename);
-    for (int i = 0; i < dataset.size(); i++) {
+    for (int i = 0; i < (int)dataset.size(); i++) {
         output << dataset[i].first;
-        if (i != dataset.size() - 1) output << ",";
+        if (i != (int)dataset.size() - 1) output << ",";
     }
     output << "\n";
-    for (int i = 0; i < dataset[0].second.size(); i++) {
-        for (int j = 0; j < dataset.size(); j++) {
+    for (int i = 0; i < (int)dataset[0].second.size(); i++) {
+        for (int j = 0; j < (int)dataset.size(); j++) {
             output << dataset[j].second[i];
-            if(j != dataset.size() - 1) output << ",";
+            if(j != (int)dataset.size() - 1) output << ",";
         }
         output << "\n";
     }
@@ -301,7 +298,7 @@ int l(int a, int i, int b, int j) {
 }
 
 
-int get_index(vector<string> & seqs, string seq) {
+int get_index(vector<string> & seqs, string & seq) {
     auto index = find(seqs.begin(), seqs.end(), seq);
 
     if (index != seqs.end()) {
@@ -311,26 +308,25 @@ int get_index(vector<string> & seqs, string seq) {
 }
 
 
-void help(void)
+void help()
 {
     printf("Usage:\n");
     printf(" -i -- input file path\n");
     printf(" -o -- output file path\n");
-
+    printf(" -m -- model <0,1,-1> , 0 for Nussinov-based model, 1 for Zuker-based model, -1 for Evaluation\n");
+    printf(" -s -- mode <1,2,3>, 1 for MFE only, 2 for balancing MFE and CAI at fixed lambda, 3 for lambda sweep\n");
+    printf(" -l -- lambda <[0,1]>\n");
+    printf(" -a -- sweep increment <(0,1]>\n");
+    printf(" -r -- input rna file path\n");
+    printf(" -O -- sweep output csv file name\n");
+    printf(" -g -- minimum gap allowed in Nussinov <[0,inf)>\n");
+    printf(" -t -- threshold tau1 <(0,1)>\n");
+    printf(" -p -- threshold tau2 <(0,1)>\n");
     printf(" ...\n");
     exit (8);
 }
 
-void usage(void)
-{
-    printf("Usage:\n");
-    printf(" -i <name>\n");
-    printf(" -o <name>\n");
-    printf(" ...\n");
-    exit (8);
-}
-
-vector<int> read_rna(string input, ostream& fout) {
+vector<int> read_rna(string & input) {
     ifstream fin(input);
     vector<int> rna;
     string line;
@@ -351,7 +347,7 @@ vector<int> read_rna(string input, ostream& fout) {
 }
 
 
-vector<int> read_fasta(string input, ostream& fout) {
+vector<int> read_fasta(string & input, ostream& fout) {
     ifstream fin(input);
     vector<int> protein;
     string line;
@@ -397,7 +393,7 @@ double evaluate_CAI(vector<int> & rna,vector<int> & protein) {
 
 }
 
-double evaluate_MFE(string & rna, vector<int> & protein) {
+double evaluate_MFE(string & rna) {
     int l = int(rna.size());
 
 //    cout << rna << endl;
@@ -410,7 +406,7 @@ double evaluate_MFE(string & rna, vector<int> & protein) {
 
 }
 
-double evaluate_MFE(vector<int> & rna, vector<int> & protein) {
+double evaluate_MFE(vector<int> & rna) {
     int l = int(rna.size());
     ZukerAlgorithm Zu = ZukerAlgorithm(rna,l);
     double mfe = Zu.calculate_W();
@@ -428,7 +424,7 @@ double evaluate_CAI_N(string & rna,vector<int> & protein,int type) {
     return CAI;
 }
 
-int evaluate_BP_N(string & rna, vector<int> & protein, int g) {
+int evaluate_BP_N(string & rna, int g) {
     int l = int(rna.size());
     vector<int> seq(l);
     transform2num(seq,rna);

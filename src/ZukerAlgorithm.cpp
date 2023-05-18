@@ -35,7 +35,7 @@ int ZukerAlgorithm::calculate_W() {
 
     ofstream de("d.txt");
 
-    calculate_V(de);
+    calculate_V();
 
     int i = 0;
     for (int j = 1; j < n; ++j) {
@@ -54,20 +54,20 @@ int ZukerAlgorithm::calculate_W() {
 //        de << 3 << " " << min_w << endl;
 
         W[index(i,j)] = min_w;
-        de << "Z - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_w  << endl;
+//        de << "Z - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_w  << endl;
     }
 
 
     return W[index(0,n-1)];
 }
 
-void ZukerAlgorithm::calculate_V(ostream & fout) {
+void ZukerAlgorithm::calculate_V() {
     int min_v = inf;
     for (int l = 4; l < n; ++l) {
         for (int i = 0; i < n - l; ++i) {
             int j = i + l;
             if (!basepair(seq[i],seq[j])) {
-                calculate_WM(i,j,fout);
+                calculate_WM(i,j);
                 continue;
             }
             min_v = inf;
@@ -153,9 +153,9 @@ void ZukerAlgorithm::calculate_V(ostream & fout) {
             min_v = min(min_v, TM[index(i+1,j-1)] + AU[seq[i]][seq[j]] + ML_closing + ML_intern);
             V[index(i,j)] = min_v;
 
-            fout << "E - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_v  << endl;
+//            fout << "E - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_v  << endl;
 
-            calculate_WM(i,j,fout);
+            calculate_WM(i,j);
         }
     }
 }
@@ -167,13 +167,12 @@ void ZukerAlgorithm::assign_seq2str(string & s, int start) {
     }
 }
 
-void ZukerAlgorithm::calculate_WM(int i, int j,ostream & fout) {
+void ZukerAlgorithm::calculate_WM(int i, int j) {
     int min_multi = inf;
 
     if (basepair(seq[i],seq[j])) {
         min_multi = min(min_multi, V[index(i,j)] + AU[seq[i]][seq[j]] + ML_intern);
     }
-//    fout << 1 << " " << min_multi << endl;
 
     if (i+1 < j) {
         min_multi = min(min_multi, WM[index(i+1,j)] + ML_BASE);
@@ -188,7 +187,7 @@ void ZukerAlgorithm::calculate_WM(int i, int j,ostream & fout) {
     TM[index(i,j)] = min(energy_b, TM[index(i,j)]);
     min_multi = min(min_multi, energy_b);
 //    fout << 3 << " " << min_multi << endl;
-    fout << "M - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_multi  << endl;
+//    fout << "M - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_multi  << endl;
     WM[index(i,j)] = min_multi;
 }
 
@@ -461,4 +460,5 @@ void ZukerAlgorithm::get_bp(string & bp) {
         bp[base_pair[a].i] = '(';
         bp[base_pair[a].j] = ')';
     }
+//    cout << bp << endl;
 }

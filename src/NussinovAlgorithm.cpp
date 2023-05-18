@@ -67,7 +67,7 @@ string NussinovAlgorithm::get_bp(int i, int j) {
 int NussinovAlgorithm::get_nbp(int i, int j) {
     string bp = get_bp(i,j);
     int count = 0;
-    for (int k = 0; k < bp.size(); k++) {
+    for (int k = 0; k < (int)bp.size(); k++) {
         if (bp[k] == '(') count++;
     }
     return count;
@@ -78,5 +78,5 @@ int NussinovAlgorithm::index(int i, int j) {
 }
 
 NussinovAlgorithm::NussinovAlgorithm(const NussinovAlgorithm & Copy):rna(Copy.rna),n(Copy.n),dp(Copy.dp.size()) {
-    std:copy(Copy.dp.begin(), Copy.dp.end(), dp.begin());
+    copy(Copy.dp.begin(), Copy.dp.end(), dp.begin());
 }

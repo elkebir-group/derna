@@ -25,10 +25,6 @@ bool complementary(int X, int Y);
 
 int sigma(int a, int i);
 
-//double CAI(int a, int x);
-
-//double maxCAI(int p);
-
 double getCAI(const vector<int> &, const vector<int> &);
 
 double stand_getCAI(const vector<int> &, const vector<int> &);
@@ -36,6 +32,7 @@ double stand_getCAI(const vector<int> &, const vector<int> &);
 int m(int n, int a, int b, int i, int j, int x=-1); //
 
 void write_csv(string, const vector<pair<string, vector<double>>> &);
+
 
 double getCAI_s(const vector<int> &, const vector<int> &);
 
@@ -51,13 +48,10 @@ string num2String(vector<int> &);
 
 void transform2num(vector<int>&, string);
 
-int get_index(vector<string>& seqs, string seq);
+int get_index(vector<string>& seqs, string & seq);
 
-//int interior_loop(int i, int j, int h, int k, int i1, int j1, int h1, int k1, int n1, int n2);
+int getxPos(int, vector<int> &);
 
-const int getxPos(int, vector<int> &);
-
-//int auterminal(int a, int b);
 
 bool add_auterminal(int a, int b);
 
@@ -67,9 +61,9 @@ bool add_uugamm(int a, int b);
 
 int l(int a, int i, int b, int j);
 
-vector<int> read_fasta(string, ostream&);
+vector<int> read_fasta(string &, ostream&);
 
-vector<int> read_rna(string input, ostream& fout);
+vector<int> read_rna(string & input);
 
 double evaluate_CAI(string &,vector<int> &,int);
 
@@ -77,14 +71,14 @@ double evaluate_CAI(vector<int> &, vector<int> &);
 
 double evaluate_CAI_N(string &,vector<int> &,int);
 
-double evaluate_MFE(string &, vector<int> &);
+double evaluate_MFE(string &);
 
-double evaluate_MFE(vector<int> &, vector<int> &);
+double evaluate_MFE(vector<int> &);
 
-int evaluate_BP_N(string &, vector<int> &, int);
+int evaluate_BP_N(string &, int);
 
-void usage(void);
-void help(void);
+void usage();
+void help();
 
 
 #endif //RNA_DESIGN_UTILS_H

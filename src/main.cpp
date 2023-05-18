@@ -1,5 +1,4 @@
 #include <iostream>
-#include <fstream>
 #include <chrono>
 
 #include "Nussinov.h"
@@ -10,7 +9,6 @@
 #include "vector"
 #include <string>
 #include <tuple>
-#include <regex>
 #include "utils.h"
 #include "params/constants.h"
 
@@ -23,36 +21,23 @@ int main(int argc, char *argv[]) {
     string input,output,rna_file,swipe_output;
     string codon_file = {};
     int model, mode;
-    double incr = inf, lambda = inf, threshold = 0.001;
+    double incr = inf, lambda = inf, threshold = 0.0025, threshold2 = 0.00075;
     int g = inf;
-    int const default_argc = 9;
+//    int const default_argc = 15;
 
-
-//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15086.fasta", "-o", "res_zuker_P15086.txt", "-m", "1", "-s", "2", "-l", "0.06348505"};
-//
-//
-//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P0DTC2.fasta", "-o", "res_zuker_P0DTC2.txt", "-m", "1", "-s", "2", "-l", "0.00001"};
-
-//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q14442.fasta", "-o", "res_zuker_Q14442.txt", "-m", "1", "-s", "2", "-l", "0.99999"};
-
-//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q8NC38.fasta", "-o", "res_zuker_Q8NC38.txt", "-m", "1", "-s", "2", "-l", "0.00005"};
-//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q92734.fasta", "-o", "res_zuker_Q92734.txt", "-m", "1", "-s", "2", "-l", "0.00005"};
-//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15421.fasta", "-o", "res_zuker_P15421.txt", "-m", "1", "-s", "2", "-l", "0.00005"};
-    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/Q8IW19.fasta", "-o", "res_zuker_Q8IW19.txt", "-m", "1", "-s", "1"};
-//        const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15421.fasta", "-o", "res_P15421_swipe.txt", "-m", "1", "-s", "3", "-O", "zuker_P15421_swipe.csv", "-l", "0.0", "-a", "0.04"};
+//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15421.fasta", "-o", "res_P15421_swipe.txt", "-m", "1", "-s", "3", "-O", "zuker_P15421_swipe2", "-l", "0.0", "-a", "0.04"};
 
 
 
 
     if (argc < 2) {
-        argc = default_argc;
-        argv = (char**)default_args;
+        help();
     }
 
     try {
 //        cout << argc << endl;
         size_t i = 1;
-        while (i+1 < argc) {
+        while ((int)i+1 < argc) {
             string param = argv[i];
 //            cout << param << endl;
             if (argv[i][0] == '-') {
@@ -92,11 +77,13 @@ int main(int argc, char *argv[]) {
                     case 't':
                         threshold = stod(argv[i+1]);
                         break;
-
+                    case 'p':
+                        threshold2 = stod(argv[i+1]);
+                        break;
                     case 'h':
                         help();
                     default:
-                        usage();
+                        help();
                 }
             }
             i += 2;
@@ -104,11 +91,9 @@ int main(int argc, char *argv[]) {
 
     } catch (const std::exception& e) {
         std::cout << "Exception!" << std::endl;
-        usage();
+        help();
         return -1;
     }
-
-//    cout << threshold << endl;
 
     bool nussinov = false;
     bool zuker = false;
@@ -137,12 +122,16 @@ int main(int argc, char *argv[]) {
         if (rna_file.empty()) throw invalid_argument("RNA Input File Needed in Test Mode");
         vector<int> protein = read_fasta(input, fout);
 
-        vector<int> rna = read_rna(rna_file, fout);
+        vector<int> rna = read_rna(rna_file);
+        string bp(rna.size(), '.');
 
         double cai = getCAI(rna, protein);
         double CAI = evaluate_CAI(rna, protein);
-        double MFE = evaluate_MFE(rna, protein);
+        double MFE = evaluate_MFE(rna);
 
+
+
+//        fout << "secondary structure: " << bp << endl;
         fout << "eval MFE: " << MFE/100 << endl;
         fout << "eval CAI: " << cai << endl;
         fout << "eval standard CAI: " << CAI << endl;
@@ -152,6 +141,7 @@ int main(int argc, char *argv[]) {
     bool mfe = false;
     bool mfe_cai = false;
     bool lambda_swipe = false;
+    bool lambda_swipe2 = false;
     switch (mode) {
         case 1:
             mfe = true;
@@ -162,7 +152,11 @@ int main(int argc, char *argv[]) {
         case 3:
             lambda_swipe = true;
             break;
+        case 4:
+            lambda_swipe2 = true;
+            break;
         default:
+            cout << mode << endl;
             throw invalid_argument("Invalid Input for Mode");
     }
 
@@ -183,7 +177,7 @@ int main(int argc, char *argv[]) {
         tuple<double, string, string> temp = N.nussinov(fout);
         n_res = get<0>(temp);
         rna = get<1>(temp);
-        int bp = evaluate_BP_N(rna,protein,g);
+        int bp = evaluate_BP_N(rna,g);
         fout << "nussinov bp count: " << bp << endl;
     }
 
@@ -193,7 +187,7 @@ int main(int argc, char *argv[]) {
         tuple<double, string> temp = N.nussinov_CAI(lambda, fout);
         n_res = get<0>(temp);
         rna = get<1>(temp);
-        int bp = evaluate_BP_N(rna,protein,g);
+        int bp = evaluate_BP_N(rna,g);
         int type = 0;
         double CAI = evaluate_CAI_N(rna,protein,type);
         fout << "lambda: " << lambda << endl;
@@ -211,7 +205,7 @@ int main(int argc, char *argv[]) {
 
     if (zuker && mfe) {
         auto start = chrono::high_resolution_clock::now();
-        Zuker Z = Zuker(input,fout,n,mode);
+        Zuker Z = Zuker(n,mode,protein);
         Z.calculate_Z(fout);
 //        Z.calculate_Z_Mem(fout);
 
@@ -237,7 +231,7 @@ int main(int argc, char *argv[]) {
 
     if (zuker && mfe_cai) {
         if (lambda == inf) throw invalid_argument("Invalid Value of lambda");
-        Zuker Z = Zuker(input,fout,n,mode);
+        Zuker Z = Zuker(n,mode,protein);
         fout << "lambda: " << lambda << endl;
         double energy_cai = Z.calculate_CAI_O(fout, lambda);
 
@@ -256,7 +250,7 @@ int main(int argc, char *argv[]) {
 //        cout << 1 << endl;
         double CAI = evaluate_CAI(zuker_cai_rna,protein,1);
 //        cout << 2 << endl;
-        double MFE = evaluate_MFE(zuker_cai_rna,protein);
+        double MFE = evaluate_MFE(zuker_cai_rna);
 
         cout << "lambda: " << lambda << ",O: " << energy_cai << ",cai: " << CAI << ",cai_s: " << CAI_s << ",mfe: " << MFE << ",combined: " << lambda*MFE+(lambda-1)*CAI << endl;
         fout << "zuker cai bp: " << zuker_cai_bp << ",size: " << zuker_cai_bp.size() << endl;
@@ -269,11 +263,17 @@ int main(int argc, char *argv[]) {
     }
 
     if (zuker && lambda_swipe) {
-        if (lambda == inf) throw invalid_argument("Invalid Value of lambda");
-        Zuker Z = Zuker(input,fout,n,mode);
-        Z.lambda_swipe_2(threshold, fout,swipe_output);
-//        Z.lambda_swipe(incr,fout,swipe_output);
+//        if (lambda == inf) throw invalid_argument("Invalid Value of lambda");
+        Zuker Z = Zuker(n,mode,protein);
+        Z.lambda_swipe_2(threshold,threshold2, fout,swipe_output);
 
+    }
+
+    if (zuker && lambda_swipe2) {
+        if (lambda == inf) throw invalid_argument("Invalid Value of lambda");
+        if (incr == inf) throw invalid_argument("Invalid increment");
+        Zuker Z = Zuker(n,mode,protein);
+        Z.lambda_swipe(incr,fout,swipe_output);
     }
 
     return 0;

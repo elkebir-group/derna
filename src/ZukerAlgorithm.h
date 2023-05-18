@@ -32,9 +32,9 @@ public:
     ZukerAlgorithm(vector<int> & seq, int n);
     ZukerAlgorithm(const ZukerAlgorithm &);
     ~ZukerAlgorithm();
-    void calculate_V(ostream &);
+    void calculate_V();
     int calculate_W();
-    void calculate_WM(int, int, ostream &);
+    void calculate_WM(int, int);
     inline int hairpin_loop(int, int, int,int,int) const;
     inline int stacking(int, int, int,int) const;
     inline int bulge_loop(int, int, int, int, int) const;

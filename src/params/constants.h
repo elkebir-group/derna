@@ -23,7 +23,8 @@
 /** The minimum loop length */
 #define TURN 3
 /** The maximum loop length */
-#define MAXLOOP 25
+#define MAXLOOP 30
+
 
 #define UNIT 100
 

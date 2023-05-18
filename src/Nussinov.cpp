@@ -14,11 +14,9 @@
 using namespace std;
 
 
-Nussinov::Nussinov(vector<int> protein,int n, int g):n(n),g(g),protein(protein) {
+Nussinov::Nussinov(vector<int> protein,int n, int g): protein(protein), n(n), g(g){
     value.resize(9*n*n*36, 0.0);
-//    n_codon = {
-//            4, 6, 2, 2, 2, 2, 2, 4, 2, 1, 3, 6, 2, 2, 4, 6, 4, 1, 2, 4
-//    };
+
     codon_index.resize(9*n*n, make_tuple(0,0,0));
     codon_index_x.resize(9*6*n*n, make_tuple(0,0,0));
     codon_index_y.resize(9*6*n*n, make_tuple(0,0,0));
@@ -26,14 +24,6 @@ Nussinov::Nussinov(vector<int> protein,int n, int g):n(n),g(g),protein(protein) 
 
 Nussinov::~Nussinov() = default;
 
-//void Nussinov::initialize() {
-//    codon_index.clear();
-//    codon_index_x.clear();
-//    codon_index_y.clear();
-//    codon_index.resize(9*n*n, make_tuple(0,0,0));
-//    codon_index_x.resize(9*6*n*n, make_tuple(0,0,0));
-//    codon_index_y.resize(9*6*n*n, make_tuple(0,0,0));
-//}
 
 tuple<double, string, string> Nussinov::nussinov(ostream &fout) {
     auto start = chrono::high_resolution_clock::now();
@@ -42,9 +32,6 @@ tuple<double, string, string> Nussinov::nussinov(ostream &fout) {
     double ans = 0;
     double ret = 0;
     double local_max = 0;
-//    vector<tuple<int,int,double>> codon_index(9*n*n, make_tuple(0,0,0));
-//    vector<tuple<int,int,double>> codon_index_x(9*6*n*n, make_tuple(0,0,0));
-//    vector<tuple<int,int,double>> codon_index_y(9*6*n*n, make_tuple(0,0,0));
 
     // when a == b
     for (int a = 0,b; a < n; a++) {
@@ -609,11 +596,7 @@ tuple<double, string> Nussinov::nussinov_CAI(double lambda, ostream &fout) {
     double ans = 0;
     double ret = 0;
     double local_max = 0;
-//    vector<tuple<int,int,double>> codon_index(9*n*n, make_tuple(0,0,0));
-//    vector<tuple<int,int,double>> codon_index_x(9*6*n*n, make_tuple(0,0,0));
-//    vector<tuple<int,int,double>> codon_index_y(9*6*n*n, make_tuple(0,0,0));
-//    initialize();
-    // when a == b
+
     for (int a = 0,b; a < n; a++) {
         b=a;
         const int p_a = protein[a];
@@ -1204,7 +1187,7 @@ string Nussinov::nussinov_CAI_tb(int a, int b, int i, int j, int x, int y, doubl
 }
 
 
-Nussinov::Nussinov(const Nussinov & Copy):n(Copy.n),g(Copy.g),value(Copy.value.size()) {
-    cout << "is it here" << endl;
-//    copy(Copy.value.begin(), Copy.value.end(), value.begin());
+Nussinov::Nussinov(const Nussinov & Copy):value(Copy.value.size()), n(Copy.n), g(Copy.g) {
+
+    copy(Copy.value.begin(), Copy.value.end(), value.begin());
 }

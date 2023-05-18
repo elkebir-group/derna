@@ -43,7 +43,7 @@ class Zuker {
 
 
 public:
-    Zuker(string & input, ostream &, int n, int);
+    Zuker(int n, int,vector<int> &);
     Zuker(const Zuker &);
     ~Zuker();
     void init_values();
@@ -62,7 +62,7 @@ public:
      *
      * @param ostream object for stdout
      * */
-    void calculate_E(ostream &);
+    void calculate_E();
 
 
 
@@ -98,7 +98,7 @@ public:
      * @param ostream object for stdout
      * @param lambda is a weight between 0 and 1
      * */
-    void calculate_CAI_E(ostream &, double lambda);
+    void calculate_CAI_E(double lambda);
 
     /**
      * Fill the vector M1 where M1[i] stores the minimum value of the
@@ -113,7 +113,7 @@ public:
      * @param lambda is a weight between 0 and 1
      * @param ostream object for stdout
      * */
-    void calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lambda, ostream &); //vector<double> &
+    void calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lambda); //vector<double> &
 
     /**
      * Find RNA sequence and secondary structure
@@ -154,7 +154,7 @@ public:
      * */
     void get_rna_cai(string & rna);
 
-    int fill_rna(string & rna, int i);
+    int fill_rna(int i);
 
     /**
      * Returns RNA sequence with 'X' at positions where the nucleotides can be replaced
@@ -187,7 +187,7 @@ public:
      * @param fout
      * @param outfile
      */
-    void lambda_swipe_2(double, ostream& fout, string & outfile);
+    void lambda_swipe_2(double, double, ostream& fout, string & outfile);
 
     /**
      * Access vector Z given protein position, codon selection and codon index (a, b, i, j, x, y)
@@ -412,7 +412,7 @@ private:
      * @param fout ostream object for stdout
      * @return minimum energy among stacking, bulge, and internal loops structures
      */
-    int internal(int a, int b, int i, int j, int x, int y, int la, int lb, int xi, int yj, int an_int, int bp_int, int type);
+    int internal(int a, int b, int i, int j, int x, int y, int la, int lb, int xi, int yj, int an_int, int bp_int);
 
 
     /**
@@ -436,7 +436,7 @@ private:
      * @return minimum energy among stacking, bulge, and internal loops structures
      * integrating with codon adaptation index
      */
-    double internal_CAI(double lambda, int a, int b,int i, int j, int x, int y, int la, int lb, int xi, int yj, int an_int, int bp_int);
+    double internal_CAI(double lambda, int a, int b,int i, int j, int x, int y, int la, int lb, int xi, int yj);
 
 
     /**
@@ -461,7 +461,7 @@ private:
      * @param fout ostream object for stdout
      * @return minimum hairpin folding energy among all possible sequences between la and lb
      */
-    int hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int a, int b, int i, int j, int x, int y, int an_int, int bp_int) const;
+    int hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y, int an_int, int bp_int) const;
     int hairpin(int,int,int,int,int,int,int) const;
 
     /**
@@ -509,7 +509,7 @@ private:
      * @param fout ostream object for stdout
      * @return minimum energy of hairpin structure among all possible sequences between la and lb, considering CAI
      */
-    double hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y, int an_int, int bp_int);
+    double hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y);
 
     /**
      * Return codon adptation index compensation for hairpin structure
@@ -528,9 +528,9 @@ private:
 
     void assign_codon(vector<int> & s, int );
 
-    double add_CAI(int,int,int,int,int) const;
+    double add_CAI(int,int,int) const;
 
-    double add_interior_CAI_2(int a, int c, int x, int h, int na=-1, int x1=-1, int pc=-1, int h1=-1) const;
+    double add_interior_CAI_2(int a, int c, int x, int na=-1, int x1=-1, int pc=-1, int h1=-1) const;
     void static assign(vector<int> &, vector<int> &, int);
 
     /**
@@ -602,7 +602,7 @@ inline int Zuker::interior_loop(int i, int j, int h, int k, int i1, int j1, int 
     int energy ;
     int type = BP_pair[i+1][j+1];
     int type2 = rtype[BP_pair[h+1][k+1]];
-    int nl, ns, m;
+    int nl, ns;
     assert(type != 0);
     assert(type2 != 0);
 
