@@ -52,7 +52,8 @@ rna: input rna file path for eval model
 
 ### Fix $\lambda$ 
 
-`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5`
+`./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5`
+`cat P15421_fixed_lambda.txt`
 
 ```
 protein sequence: MYGKIIFVLLLSGIVSISASSTTGVAMHTSTSSSVTKSYISSQTNGITLINWWAMARVIFEVMLVVVGMIILISYCIR
@@ -72,13 +73,14 @@ Minimum Free Energy: -148.7
 
 ### Sweep (default thresholds) 
 
-`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_sweep.txt -m 1 -s 3`
+`./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_sweep.txt -O P15421_sweep -m 1 -s 3`
 
 Estimated time: 10min 
 
 ### Evaluate an RNA sequence
 
-`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_evaluation.txt -r ./data/RNA/P15421_rna.txt -m -1`
+`./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_evaluation.txt -r ./data/RNA/P15421_rna.txt -m -1`
+`cat P15421_evaluation.txt`
 
 ```
 protein sequence: MYGKIIFVLLLSGIVSISASSTTGVAMHTSTSSSVTKSYISSQTNGITLINWWAMARVIFEVMLVVVGMIILISYCIR
@@ -90,7 +92,8 @@ eval standard CAI: 0.694881
 
 ### Only consider MFE
 
-`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_MFE_only.txt -m 1 -s 1`
+`./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_MFE_only.txt -m 1 -s 1`
+`cat P15421_MFE_only.txt`
 
 ```
 protein sequence: MYGKIIFVLLLSGIVSISASSTTGVAMHTSTSSSVTKSYISSQTNGITLINWWAMARVIFEVMLVVVGMIILISYCIR
@@ -108,12 +111,12 @@ zuker cai: 0.694881
 
 ### Nussinov based model (Fixed $\lambda$)
 
-`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_nussinov.txt -m 0 -s 2 -l 0.5 -g 1`
+`./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_nussinov.txt -m 0 -s 2 -l 0.5 -g 1`
 
 ### Specify Codon Usage Table
 
-`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -c ./data/InputFiles/sample_codon_usage.csv`
+`./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -c ./data/InputFiles/sample_codon_usage.csv`
 
 ### Specify Energy Parameters
 
-`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -d ./data/InputFiles/`
+`./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -d ./data/InputFiles/`
