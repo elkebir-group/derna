@@ -53,6 +53,7 @@ rna: input rna file path for eval model
 ### Fix $\lambda$ 
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5`
+
 `cat P15421_fixed_lambda.txt`
 
 ```
@@ -80,6 +81,7 @@ Estimated time: 10min
 ### Evaluate an RNA sequence
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_evaluation.txt -r ./data/RNA/P15421_rna.txt -m -1`
+
 `cat P15421_evaluation.txt`
 
 ```
@@ -93,6 +95,7 @@ eval standard CAI: 0.694881
 ### Only consider MFE
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_MFE_only.txt -m 1 -s 1`
+
 `cat P15421_MFE_only.txt`
 
 ```
