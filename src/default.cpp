@@ -35,17 +35,7 @@ PUBLIC int ninio37=60;
 PUBLIC int niniodH=320;
 PUBLIC int TerminalAU37=50;
 PUBLIC int TerminalAUdH=370;
-//PUBLIC int ML_intern37=91;
-//PUBLIC int ML_interndH=1290;
-//PUBLIC int ML_closing37=925;
-//PUBLIC int ML_closingdH=3890;
-//PUBLIC int ML_BASE37=-63;
-//PUBLIC int ML_BASEdH=-1190;
-//PUBLIC int MAX_NINIO=300;
-//PUBLIC int ninio37=60;
-//PUBLIC int niniodH=320;
-//PUBLIC int TerminalAU37=70;
-//PUBLIC int TerminalAUdH=500;
+
 
 // loop length penalty based on loop type
 PUBLIC int hairpin37[31] = {   INF,   INF,   INF,   540,   560,   570,   540,   600,   550,   640,   650,   660,   670,   680,   690,   690,   700,   710,   710,   720,   720,   730,   730,   740,   740,   750,   750,   750,   760,   760,   770};
@@ -1605,11 +1595,11 @@ void fill_codon(const string &filename, char delimeter) {
 
 }
 
-void scale_params(const string & file,  double temp) {
+void scale_params(const string & file, const string & paramspath, double temp) {
     int  i, j, k, l;
     double tempf = (temp + K0) / Tmeasure;
 
-    if (!PARAMSPATH.empty()) {
+    if (!paramspath.empty()) {
         string stack_file = PARAMSPATH + "stack.csv";
         string stackh_file = PARAMSPATH + "stack_H.csv";
         string mismatchI_file = PARAMSPATH + "mismatchI.csv";

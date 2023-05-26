@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
     int n;//len of protein
     string input,output,rna_file,swipe_output;
     string codon_file = {};
+    string param_path = {};
     int model, mode;
     double incr = inf, lambda = inf, threshold = 0.0025, threshold2 = 0.00075;
     int g = inf;
@@ -73,6 +74,9 @@ int main(int argc, char *argv[]) {
                         break;
                     case 'c':
                         codon_file = argv[i+1];
+                        break;
+                    case 'd':
+                        param_path = argv[i+1];
                         break;
                     case 't':
                         threshold = stod(argv[i+1]);

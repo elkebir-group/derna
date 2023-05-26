@@ -27,6 +27,8 @@ make
 -g - <[0,inf)>
 -t - threshold tau <(0,1)>
 -p - threshold tau2 <(0,1)>
+-c - <codon usage table file path>
+-d - <energy parameters (model) directory>
 ```
 
 ```
@@ -50,7 +52,7 @@ rna: input rna file path for eval model
 
 ### Fix $\lambda$ 
 
-`./derna -i /data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5`
+`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5`
 
 ```
 protein sequence: MYGKIIFVLLLSGIVSISASSTTGVAMHTSTSSSVTKSYISSQTNGITLINWWAMARVIFEVMLVVVGMIILISYCIR
@@ -108,3 +110,10 @@ zuker cai: 0.694881
 
 `./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_nussinov.txt -m 0 -s 2 -l 0.5 -g 1`
 
+### Specify Codon Usage Table
+
+`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -c ./data/InputFiles/sample_codon_usage.csv`
+
+### Specify Energy Parameters
+
+`./derna -i ./data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -d ./data/InputFiles/`

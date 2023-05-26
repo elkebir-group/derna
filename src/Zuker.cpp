@@ -12,11 +12,8 @@
 #include <unordered_map>
 #include <queue>
 #include "params/constants.h"
-//#include <set>
 
 using namespace std;
-
-//ofstream Eout("eout.txt")
 
 
 
@@ -111,7 +108,6 @@ int Zuker::calculate_Z(ostream &fout) {
 
     // fill vector E and M first before filling Z
     calculate_E();
-//    calculate_E_2(debug);
     cout << "E done" << endl;
 
     int nuc_len = 3*n;

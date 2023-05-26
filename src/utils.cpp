@@ -322,6 +322,8 @@ void help()
     printf(" -g -- minimum gap allowed in Nussinov <[0,inf)>\n");
     printf(" -t -- threshold tau1 <(0,1)>\n");
     printf(" -p -- threshold tau2 <(0,1)>\n");
+    printf(" -c -- codon usage table file path\n");
+    printf(" -d -- directory to energy parameters\n");
     printf(" ...\n");
     exit (8);
 }
