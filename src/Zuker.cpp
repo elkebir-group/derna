@@ -406,8 +406,6 @@ int Zuker::hairpin(int la, int lb, int l, int xi, int yj, int an_int, int bp_int
 int Zuker::hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y, int an_int, int bp_int) const {
     int hairpin_energy = inf;
     string s;
-//    vector<int> temp;
-    // special case l = 4,5,7
     switch (l) {
         int xi_, _yj, xi2_, _2yj, xi3_, _3yj;
 
@@ -1599,10 +1597,8 @@ double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int 
                         Access_EB(idx_m) = t;
                         E_bt[idx_m] = temp;
 
-
                         mfe2 = Access_E2(c,d,i1,j1,xh,xk) + mfe;
                         cai2 = E_CAI[index(c,d,i1,j1,xh,xk)] + cai;
-
 
                     }
 
@@ -1706,9 +1702,6 @@ double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, in
     static vector<int> temp;
 
     if (a < b-2 && i == 2 && j == 0) {
-//        int pna = protein[a+1];
-//        int ppb = protein[b-1];
-//        int idx_t = ;
         for (int x1 = 0; x1 < n_codon_an; ++x1) {
             for (int y1 = 0; y1 < n_codon_bp; ++y1) {
                 temp_e =  TM[index(a+1,b-1,0,2,x1,y1)] + (lambda-1)*(codon_cai[pa][x] + codon_cai[pb][y]); //idx_t + 6*x1 + y1
@@ -2652,14 +2645,11 @@ void Zuker::traceback_B() {
             goto repeat;
         }
 
-//        cout << "outloop " << ml << endl;
-
 
         if (ml == 0) {
             int energy;
             bt = Access_OB(idx);
             oij = Access_Z(a,b,i,j,x,y);
-//            cout << bt << endl;
             switch (bt) {
                 int kj, c1, i1_;
                 case -1:
@@ -2667,11 +2657,13 @@ void Zuker::traceback_B() {
                     bp_bond[++t].i = sigma(a,i);
                     bp_bond[t].j   = sigma(b,j);
                     goto repeat;
+                    break;
                 case -2:
                     oi = Access_Z(a,b,i,j-1,x,y);
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i, sector[s].j = j-1, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
                     goto OUTLOOP;
+                    break;
                 case -3:
                     energy = inf;
                     for (ky = 0; ky < n_codon_bp; ++ky) {
@@ -2689,6 +2681,7 @@ void Zuker::traceback_B() {
                         sector[s].b = b - 1, sector[s].i = i, sector[s].j = 2, sector[s].x = x, sector[s].y = kj, sector[s].ml = ml;
                         goto OUTLOOP;
                     }
+                    break;
                 case -4:
                     energy = inf;
                     for (c=b-1,traced_ab=0,traced_ij=0; c>=0; --c) {
@@ -2779,11 +2772,13 @@ void Zuker::traceback_B() {
                     bp_bond[++t].i = sigma(a, i);
                     bp_bond[t].j = sigma(b, j);
                     goto repeat;
+                    break;
                 case -2:
                     oi = Access_M(a, b, i + 1, j, x, y) + ML_BASE;
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i+1, sector[s].j = j, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
                     goto OUTLOOP;
+                    break;
                 case -3:
                     energy = inf;
                     for (hx = 0; hx < n_codon_an; ++hx) {
@@ -2800,11 +2795,13 @@ void Zuker::traceback_B() {
                         sector[s].b = b, sector[s].i = 0, sector[s].j = j, sector[s].x = hi, sector[s].y = y, sector[s].ml = ml;
                         goto OUTLOOP;
                     }
+                    break;
                 case -4:
                     oi = Access_M(a,b,i,j-1,x,y) +  ML_BASE;
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i, sector[s].j = j-1, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
                     goto OUTLOOP;
+                    break;
                 case -5:
                     energy = inf;
                     for (ky = 0; ky < n_codon_bp; ++ky) {
@@ -2820,6 +2817,7 @@ void Zuker::traceback_B() {
                         sector[s].b = b - 1, sector[s].i = i, sector[s].j = 2, sector[s].x = x, sector[s].y = kj, sector[s].ml = ml;
                         goto OUTLOOP;
                     }
+                    break;
                 case -6:
                     energy = inf;
                     for (int lc = li + 5; lc <= rj-4; lc++) {
@@ -2868,8 +2866,8 @@ void Zuker::traceback_B() {
                                 goto OUTLOOP;
                             }
                         }
-//                }
                     }
+                    break;
                 default:
                     cout << a << " " << b << " " << i << " " << j << " " << x << " " << y << " " << oij << endl;
                     exit(3);
@@ -3089,7 +3087,7 @@ void Zuker::traceback_B() {
                         goto OUTLOOP;
                     }
                 }
-
+                break;
             case -3:
                 energy = inf;
                 sector[s+1].ml = sector[s+2].ml = 1;
@@ -3251,6 +3249,7 @@ void Zuker::traceback_B() {
                         break;
                     }
                 }
+                break;
             case -4:
                 energy = inf;
                 lc = li + 1;
@@ -3294,6 +3293,7 @@ void Zuker::traceback_B() {
                     a = c1, b = d1, i = i1_, j = j1_, x = hx1, y = ky1;
                     goto repeat;
                 }
+                break;
             case -5:
 
                 energy = inf;
@@ -3353,6 +3353,7 @@ void Zuker::traceback_B() {
                     a = c1, b = d1, i = i1_, j = j1_, x = hx1, y = ky1;
                     goto repeat;
                 }
+                break;
             case -6:
                 int _hi1, kj1_;
                 energy = inf;
@@ -3442,6 +3443,7 @@ void Zuker::traceback_B() {
                     a = c1, b = d1, i = i1_, j = j1_, x = hx1, y = ky1;
                     goto repeat;
                 }
+                break;
             default:
                 cout << "backtracking failed in repeat: " << a << " " << b << " " << i << " " << j << " " << x << " " << y << " " << en << " " << bt << " " << endl;
                 exit(3);
@@ -3524,7 +3526,6 @@ void Zuker::traceback_B2(double lambda) {
                     oi = Access_E1(a,b,i,j,x,y) + lambda*AU[xi][yj];
                     bp_bond[++t].i = sigma(a,i);
                     bp_bond[t].j   = sigma(b,j);
-                    assert(compare(oij, oi));
                     goto repeat;
                     break;
                 case -2:
@@ -3532,7 +3533,6 @@ void Zuker::traceback_B2(double lambda) {
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i, sector[s].j = j-1, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
 //                    cout << 1 << " " << a << " " << b << " " << i << " " << j-1 << " " << x << " " << y << endl;
-                    assert(compare(oij, oi));
                     goto OUTLOOP;
                     break;
                 case -3:
@@ -3564,12 +3564,9 @@ void Zuker::traceback_B2(double lambda) {
 
                     a = br;
                     i = jr;
-//                    b = b;
-//                    j = j;
                     x = yr;
                     bp_bond[++t].i = sigma(a,i);
                     bp_bond[t].j   = sigma(b,j);
-                    assert(compare(oij, energy));
                     goto repeat;
 
 
@@ -3597,8 +3594,6 @@ void Zuker::traceback_B2(double lambda) {
                     oi = Access_M1(a, b, i + 1, j, x, y) + lambda * ML_BASE;
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i+1, sector[s].j = j, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
-//                    cout << 4 << " " << a << " " << b << " " << i+1 << " " << j << " " << x << " " << y << endl;
-                    assert(compare(oij, oi));
                     goto OUTLOOP;
                     break;
                 case -3:
@@ -3608,13 +3603,6 @@ void Zuker::traceback_B2(double lambda) {
 //                    if (compare(energy, oij)) {
                     sector[++s].a = a + 1;
                     sector[s].b = b, sector[s].i = 0, sector[s].j = j, sector[s].x = hi, sector[s].y = y, sector[s].ml = ml;
-//                    cout << 5 << " " << a+1 << " " << b << " " << 0 << " " << j << " " << hi << " " << y << endl;
-
-//                    cout << "mfe: " << M2[index(a + 1, b, 0, j, hi, y)] + lambda * ML_BASE << endl;
-//                    cout << "cai: " << M_CAI[index(a + 1, b, 0, j, hi, y)] + + (lambda-1) * codon_cai[pa][x] << endl;
-//
-//                    cout << oij << " " << energy << " " << oij - energy << endl;
-                    assert(compare(oij, energy));
                     goto OUTLOOP;
 //                    }
                     break;
@@ -3622,8 +3610,7 @@ void Zuker::traceback_B2(double lambda) {
                     oi = Access_M1(a,b,i,j-1,x,y) + lambda * ML_BASE;
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i, sector[s].j = j-1, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
-//                    cout << 6 << " " << a << " " << b << " " << i << " " << j-1 << " " << x << " " << y << endl;
-                    assert(compare(oij, oi));
+
                     goto OUTLOOP;
                     break;
                 case -5:
@@ -3632,8 +3619,7 @@ void Zuker::traceback_B2(double lambda) {
 //                    if (compare(energy, oij)) {
                     sector[++s].a = a;
                     sector[s].b = b - 1, sector[s].i = i, sector[s].j = 2, sector[s].x = x, sector[s].y = kj, sector[s].ml = ml;
-//                    cout << 7 << " " << a << " " << b-1 << " " << i << " " << 2 << " " << x << " " << kj << endl;
-                    assert(compare(oij, energy));
+
                     goto OUTLOOP;
 //                    }
                     break;
@@ -3653,9 +3639,7 @@ void Zuker::traceback_B2(double lambda) {
 
                     sector[++s].a = c1;
                     sector[s].i = i1_, sector[s].b = b, sector[s].j = j, sector[s].x = kj, sector[s].y = y, sector[s].ml = ml;
-//                    cout << 9 << " " << c1 << " " << b << " " << i1_ << " " << j << " " << kj << " " << y << endl;
-//                    cout << oij << " " << energy << " " << oij - energy << endl;
-                    assert(compare(oij, energy));
+
                     goto OUTLOOP;
 //                    }
                     break;
@@ -3674,11 +3658,6 @@ void Zuker::traceback_B2(double lambda) {
         pb = protein[b];
         xi = nucleotides[pa][x][i];
         yj = nucleotides[pb][y][j];
-//        int type = BP_pair[xi+1][yj+1];
-
-
-
-//        Bout << "repeat: " << a << " " << b << " " << i << " " << j << " " << x << " " << y << " " << eij << endl;
 
         if (a > b || (a == b && i >= j)) {
             break;
@@ -3811,7 +3790,6 @@ void Zuker::traceback_B2(double lambda) {
                     }
 
                     assign(nucle_seq,nuc,li+1);
-                    assert(compare(eij, hairpin+cai));
                     goto OUTLOOP;
                 } else {
                     // {l,xi,xi_,_yj,yj,a,x,b,y-1}
@@ -3820,7 +3798,6 @@ void Zuker::traceback_B2(double lambda) {
                     energy = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1) + (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a1,x1,b1,y1);
                     nucle_seq[li+1] = xi_;
                     nucle_seq[rj-1] = _yj;
-                    assert(compare(eij, energy));
                     goto OUTLOOP;
                 }
                 break;
@@ -3847,7 +3824,7 @@ void Zuker::traceback_B2(double lambda) {
 
 
                 c = TM_bt[t_idx][0], i1 =TM_bt[t_idx][1], sh = TM_bt[t_idx][2], c1 = TM_bt[t_idx][3], i1_ = TM_bt[t_idx][4], sk = TM_bt[t_idx][5];
-//                cout << 1 << endl;
+
 
                 if (i1_ >= 1) {
                     energy = Access_M1(sa,c,si,i1,sx,sh) + Access_M1(c1,sb,i1_,sj,sk,sy) - (lambda-1)*codon_cai[protein[c1]][sk];
@@ -3863,8 +3840,7 @@ void Zuker::traceback_B2(double lambda) {
 
                 sector[++s].a = c1;
                 sector[s].i = i1_, sector[s].b = sb, sector[s].j = sj, sector[s].x = sk, sector[s].y = sy;
-//                cout << 11 << " " << c1 << " " << sb << " " << i1_ << " " << sj << " " << sk << " " << sy << endl;
-                assert(compare(en, energy));
+
                 break;
 
             case -4:
@@ -3880,21 +3856,16 @@ void Zuker::traceback_B2(double lambda) {
                 nucle_seq[lc] = hi;
                 nucle_seq[ld] = kj;
                 a = c, b = d, i = i1, j = j1, x = hx, y = ky;
-//                cout << eij << " " << energy << " " << eij-energy << endl;
-                assert(compare(eij, energy));
+
                 goto repeat;
 //                }
                 break;
             case -5:
-//                for (auto v: E_bt[idx]) {
-//                    cout << v << " ";
-//                }
-//                cout << endl;
+
                 c = E_bt[idx][0], d = E_bt[idx][1], i1 = E_bt[idx][2], j1 = E_bt[idx][3], hx = E_bt[idx][4], ky = E_bt[idx][5], hi = E_bt[idx][6], kj = E_bt[idx][7], ll = E_bt[idx][8];
                 energy = Access_E1(c, d, i1, j1, hx, ky) + lambda * bulge_loop(xi, yj, hi, kj, ll)  + (lambda-1)*(add_CAI(a,c,x) + add_CAI(b,d,y));
                 lc = sigma(c,i1), ld = sigma(d,j1);
-//                if (compare(energy,eij)) { //,  interior_energy == internal_energy
-//                {
+
                 bp_bond[++t].i = lc;
                 bp_bond[t].j = ld;
 
@@ -3902,17 +3873,14 @@ void Zuker::traceback_B2(double lambda) {
                 nucle_seq[ld] = kj;
 
                 a = c, b = d, i = i1, j = j1, x = hx, y = ky;
-                assert(compare(eij, energy));
+
                 goto repeat;
 //                }
                 break;
             case -6:
                 int _hi, kj_, lr;
                 int na,xa,cp,xc,bp,xb,nd,xd;
-//                for (auto v: E_bt[idx]) {
-//                    cout << v << " ";
-//                }
-//                cout << endl;
+
                 c = E_bt[idx][0], d = E_bt[idx][1], i1 = E_bt[idx][2], j1 = E_bt[idx][3], hx = E_bt[idx][4], ky = E_bt[idx][5], hi = E_bt[idx][6], kj = E_bt[idx][7];
                 xi_ = E_bt[idx][8], _yj = E_bt[idx][9], _hi = E_bt[idx][10], kj_ = E_bt[idx][11],  ll = E_bt[idx][12], lr = E_bt[idx][13];
                 na = E_bt[idx][14], xa = E_bt[idx][15], cp = E_bt[idx][16], xc = E_bt[idx][17], bp = E_bt[idx][18], xb = E_bt[idx][19], nd = E_bt[idx][20], xd = E_bt[idx][21];
@@ -3938,9 +3906,6 @@ void Zuker::traceback_B2(double lambda) {
 
                 a = c, b = d, i = i1, j = j1, x = hx, y = ky;
 
-//                cout << "mfe: " << E2[index(c, d, i1, j1, hx, ky)] + lambda* interior_loop(xi, yj, hi, kj, xi_, _yj, _hi, kj_,ll, lr) << endl;
-
-                assert(compare(eij, energy));
                 goto repeat;
 
                 break;
@@ -3955,7 +3920,7 @@ void Zuker::traceback_B2(double lambda) {
 }
 
 void Zuker::assign_codon(vector<int> &s, int sp) {
-    int m = s.size()/3;
+    int m = (int)s.size()/3;
     for (int i = 0; i < m; ++i) {
         vector<int> codon(3);
         int p = protein[sp+i];
@@ -4170,9 +4135,6 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
                 Access_Z2(idx) = mfe;
                 Z_CAI[idx] = cai;
 
-
-                assert(compare(O[index(a,b,i,j,x,y)], Z2[index(a,b,i,j,x,y)] + Z_CAI[index(a,b,i,j,x,y)]));
-
             }
         }
 
@@ -4284,14 +4246,6 @@ void Zuker::calculate_CAI_E(double lambda) {
                         Access_EB(a,b,i,j,x,y) = t;
                         E_bt[index(a,b,i,j,x,y)] = temp;
 
-//                        fout <<  "E - " << "(" << a << ", " << i << ") (" << b << ", " << j << ") (" << x << ", " << y << ") ,index: " << index(a,b,i,j,x,y) << endl;
-
-//                        cout << E1[index(a,b,i,j,x,y)]  << " " << E2[index(a,b,i,j,x,y)] + E_CAI[index(a,b,i,j,x,y)] << endl;
-
-//
-
-                        assert(compare(E1[index(a,b,i,j,x,y)], E2[index(a,b,i,j,x,y)] + E_CAI[index(a,b,i,j,x,y)], 0.001));
-
 
                         calculate_CAI_M(a,b,i,j,x,y,lambda);
                     }
@@ -4361,7 +4315,7 @@ double Zuker::add_hairpin_CAI_8(int a, int b, int x, int y, int a1, int x1, int 
 }
 
 double Zuker::add_hairpin_CAI_3(vector<int> &s, int sp) const {
-    int m = s.size()/3;
+    int m = (int)s.size()/3;
 //    cout << m << endl;
     double CAI_ans = 0;
     for (int i = 0; i < m; ++i) {
@@ -5224,7 +5178,7 @@ int Zuker::fill_rna(int index) {
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
-                };
+                }
             }
         }
         return idx;
@@ -5236,7 +5190,7 @@ int Zuker::fill_rna(int index) {
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
-                };
+                }
             }
         }
         return idx;
@@ -5270,7 +5224,7 @@ int Zuker::fill_rna(int index) {
 }
 
 void Zuker::assign(vector<int> & target, vector<int> & values, int start) {
-    int size = values.size();
+    int size = (int)values.size();
     int end = start + size;
     for (int i = start; i < end; ++i) {
         //cout << "pos7: " << i << endl;

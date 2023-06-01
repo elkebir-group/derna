@@ -1,6 +1,6 @@
 #include <iostream>
 #include <chrono>
-#include <cassert>
+
 #include "Nussinov.h"
 #include "NussinovAlgorithm.h"
 #include "ZukerAlgorithm.h"
@@ -24,11 +24,6 @@ int main(int argc, char *argv[]) {
     int model, mode;
     double incr = inf, lambda = inf, threshold = 0.0025, threshold2 = 0.00075;
     int g = inf;
-//    int const default_argc = 15;
-
-//    const char* default_args[] = {"./RNA_Design","-i", "../data/uniprotSeq/P15421.fasta", "-o", "res_P15421_swipe.txt", "-m", "1", "-s", "3", "-O", "zuker_P15421_swipe2", "-l", "0.0", "-a", "0.04"};
-
-
 
 
     if (argc < 2) {
@@ -84,8 +79,6 @@ int main(int argc, char *argv[]) {
                     case 'p':
                         threshold2 = stod(argv[i+1]);
                         break;
-                    case 'h':
-                        help();
                     default:
                         help();
                 }
@@ -113,13 +106,13 @@ int main(int argc, char *argv[]) {
             test = true;
             break;
         default:
-            cout << model << endl;
+//            cout << model << endl;
             throw invalid_argument("Invalid Input for Model");
     }
 
     if (output.empty()) throw invalid_argument("Output File Needed");
     ofstream fout(output);
-    scale_params(codon_file); //"../python/pfizer_codon_usage.csv"
+    scale_params(codon_file, param_path); //"../python/pfizer_codon_usage.csv"
 
 
     if (test) {
@@ -160,7 +153,7 @@ int main(int argc, char *argv[]) {
             lambda_swipe2 = true;
             break;
         default:
-            cout << mode << endl;
+//            cout << mode << endl;
             throw invalid_argument("Invalid Input for Mode");
     }
 

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.1)
 project(derna)
 
 set(CMAKE_CXX_STANDARD 11)
@@ -8,6 +8,7 @@ IF( NOT CMAKE_BUILD_TYPE )
 ENDIF()
 
 set(CMAKE_CXX_FLAGS "-Wall -Wextra")
+set(CMAKE_CXX_FLAGS "-Wno-uninitialized")
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 

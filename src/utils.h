@@ -7,7 +7,6 @@
 #define RNA_DESIGN_UTILS_H
 #include <string>
 #include <vector>
-#include <cassert>
 #include <cstring>
 #include <algorithm>
 #include "Nussinov.h"

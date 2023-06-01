@@ -1659,7 +1659,6 @@ void scale_params(const string & file, const string & paramspath, double temp) {
     for (i = 0; i < 20; i++) {
         max_cai_pos[i] = max_element(codon_usage[i], codon_usage[i] + 6) - codon_usage[i];
         double max_c = codon_usage[i][max_cai_pos[i]];
-        assert(max_element(codon_usage[i], codon_usage[i] + 6) - codon_usage[i] == max_cai_pos[i]);
 //                *max_element(codon_usage[i], codon_usage[i] + 6);
         for (j = 0; j < 6; j++) {
             if (j < n_codon[i] && codon_usage[i][j] == 0) {
