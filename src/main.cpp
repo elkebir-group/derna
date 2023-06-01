@@ -1,6 +1,6 @@
 #include <iostream>
 #include <chrono>
-
+#include <cassert>
 #include "Nussinov.h"
 #include "NussinovAlgorithm.h"
 #include "ZukerAlgorithm.h"
