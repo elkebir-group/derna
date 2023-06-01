@@ -69,8 +69,6 @@ inline int ZukerAlgorithm::bulge_loop(int i, int j, int h, int k, int l) const {
 inline int ZukerAlgorithm::stacking(int i, int j, int p, int q) const {
     int type = BP_pair[i+1][j+1];
     int type2 = rtype[BP_pair[p+1][q+1]];
-    assert(type != 0);
-    assert(type2 != 0);
     int stacking_energy = stackE[type][type2];//stacks[stack_index(i, j1, j, i1)];
     return stacking_energy;
 
@@ -81,8 +79,6 @@ inline int ZukerAlgorithm::interior_loop(int i, int j, int h, int k, int i1, int
     int type = BP_pair[i+1][j+1];
     int type2 = rtype[BP_pair[h+1][k+1]];
     int nl, ns;
-    assert(type != 0);
-    assert(type2 != 0);
 
     nl = max(n1, n2);
     ns = min(n1, n2);

@@ -603,8 +603,6 @@ inline int Zuker::interior_loop(int i, int j, int h, int k, int i1, int j1, int 
     int type = BP_pair[i+1][j+1];
     int type2 = rtype[BP_pair[h+1][k+1]];
     int nl, ns;
-    assert(type != 0);
-    assert(type2 != 0);
 
     nl = max(n1, n2);
     ns = min(n1, n2);
@@ -672,8 +670,6 @@ inline int Zuker::bulge_loop(int i, int j, int h, int k, int l) {
 inline int Zuker::stacking(int i, int j, int i1, int j1) {
     int type = BP_pair[i+1][j+1];
     int type2 = rtype[BP_pair[i1+1][j1+1]];
-    assert(type != 0);
-    assert(type2 != 0);
     int stacking_energy = stackE[type][type2];//stacks[stack_index(i, j1, j, i1)];
     return stacking_energy;
 }
