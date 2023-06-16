@@ -124,11 +124,11 @@ int main(int argc, char *argv[]) {
 
         double cai = getCAI(rna, protein);
         double CAI = evaluate_CAI(rna, protein);
-        double MFE = evaluate_MFE(rna);
+        double MFE = evaluate_MFE(rna, bp);
 
 
 
-//        fout << "secondary structure: " << bp << endl;
+        fout << "secondary structure: " << bp << endl;
         fout << "eval MFE: " << MFE/100 << endl;
         fout << "eval CAI: " << cai << endl;
         fout << "eval standard CAI: " << CAI << endl;

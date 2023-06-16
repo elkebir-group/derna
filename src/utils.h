@@ -75,7 +75,7 @@ double evaluate_CAI_N(string &,vector<int> &,int);
 
 double evaluate_MFE(string &);
 
-double evaluate_MFE(vector<int> &);
+double evaluate_MFE(vector<int> &, string & bp);
 
 int evaluate_BP_N(string &, int);
 
