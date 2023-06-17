@@ -19,6 +19,7 @@ class ZukerAlgorithm
     vector<int> & seq;
     string bp;
     int n;
+    int minV;
     vector<int> W;
     vector<int> V;
     vector<int> WM;
@@ -41,6 +42,7 @@ public:
     inline int interior_loop(int, int, int, int,int,int,int,int,int,int) const;
     int index(int, int);
     void traceback();
+    void traceback_2();
     void get_bp(string &);
 
 private:

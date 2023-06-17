@@ -12,10 +12,11 @@
 
 using namespace std;
 
+//ofstream de("d.txt");
+
 ZukerAlgorithm::ZukerAlgorithm(vector<int> & seq, int n):seq(seq),n(n){
 
-
-    W.resize(n*n, 0);
+    minV = 0;
     V.resize(n*n, inf);
     WM.resize(n*n, inf);
     TM.resize(n*n, inf);
@@ -33,10 +34,8 @@ ZukerAlgorithm::~ZukerAlgorithm() = default;
 int ZukerAlgorithm::calculate_W() {
     int min_w = inf;
 
-    ofstream de("d.txt");
-
     calculate_V();
-
+    W.resize(n*n, minV);
     int i = 0;
     for (int j = 1; j < n; ++j) {
         min_w = inf;
@@ -99,19 +98,13 @@ void ZukerAlgorithm::calculate_V() {
                         exit(5);
                         break;
                 }
-//                if (i == 122 && j == 136) {
-//                    cout << s << " " << min_v << endl;
-//                }
-            }
-//            if (i == 122 && j == 136) {
-//                cout << "h: " << hairpin_loop(seq[i],seq[j],seq[i+1],seq[j-1],l-1) << endl;
-//            }
-            min_v = min(min_v, hairpin_loop(seq[i],seq[j],seq[i+1],seq[j-1],l-1));
-//            if (i == 122 && j == 136) {
-//                cout << "h_min: " << min_v << endl;
-//            }
 
-//            fout << 1 << " " << min_v << endl;
+            }
+
+            min_v = min(min_v, hairpin_loop(seq[i],seq[j],seq[i+1],seq[j-1],l-1));
+
+
+//            de << "1 " << min_v << endl;
 
             for (int p = i+1; p <= min(j-5, i+MAXLOOP+1); ++p) {
 //                int minq = p + 4;
@@ -123,37 +116,26 @@ void ZukerAlgorithm::calculate_V() {
                     int lr = j-q;
                     int internal_min = inf;
                     if (ll == 1 && lr == 1) {
-//                        if (i == 122 && j == 136) {
-//                            cout << "s: " << seq[i] <<" " << seq[j] << " " << seq[p] << " " << seq[q] << " " <<  stacking(seq[i],seq[j],seq[p],seq[q]) << endl;
-//                        }
                         internal_min = min(internal_min, stacking(seq[i],seq[j],seq[p],seq[q]));
                     }
                     else if (ll == 1 || lr == 1) {
-//                        if (i == 122 && j == 136) {
-//                            cout << "b: " << seq[i] <<" " << seq[j] << " " << seq[p] << " " << seq[q] << " " <<  bulge_loop(seq[i],seq[j],seq[p],seq[q],max(ll,lr)-1) << endl;
-//                        }
                         internal_min = min(internal_min, bulge_loop(seq[i],seq[j],seq[p],seq[q],max(ll,lr)-1));
                     }
                     else {
-//                        if (i == 122 && j == 136) {
-//                            cout << "i: " << seq[i] <<" " << seq[j] << " " << seq[p] << " " << seq[q] << " " <<  interior_loop(seq[i],seq[j],seq[p],seq[q],seq[i+1],seq[j-1],seq[p-1],seq[q+1],ll-1,lr-1) << endl;
-//                        }
                         internal_min = min(internal_min, interior_loop(seq[i],seq[j],seq[p],seq[q],seq[i+1],seq[j-1],seq[p-1],seq[q+1],ll-1,lr-1));
                     }
-//                    if (i == 122 && j == 136) {
-//                        cout << internal_min << " " << V[index(p,q)] << " " << p << " " << q << endl;
-//                    }
                     min_v = min(min_v, internal_min + V[index(p,q)]);
-//                    if (i == 122 && j == 136) {
-//                        cout << min_v << " " << p << " " << q << endl;
-//                    }
                  }
             }
 
             min_v = min(min_v, TM[index(i+1,j-1)] + AU[seq[i]][seq[j]] + ML_closing + ML_intern);
+//            de << "2 " << min_v << endl;
             V[index(i,j)] = min_v;
 
-//            fout << "E - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_v  << endl;
+            minV = max(min_v, minV);
+
+//            de << "V - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_v  << endl;
+
 
             calculate_WM(i,j);
         }
@@ -179,20 +161,24 @@ void ZukerAlgorithm::calculate_WM(int i, int j) {
 
         min_multi = min(min_multi, WM[index(i,j-1)] + ML_BASE);
     }
-//    fout << 2 << " " << min_multi << endl;
+//    de << 2 << " " << min_multi << endl;
     int energy_b = inf;
     for (int k = i + 4; k <= j-4; ++k) {
         energy_b = min(energy_b, WM[index(i,k-1)] + WM[index(k,j)]);
     }
     TM[index(i,j)] = min(energy_b, TM[index(i,j)]);
     min_multi = min(min_multi, energy_b);
-//    fout << 3 << " " << min_multi << endl;
-//    fout << "M - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_multi  << endl;
+//    de << 3 << " " << min_multi << endl;
+//    de << "M - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_multi  << endl;
     WM[index(i,j)] = min_multi;
 }
 
 int ZukerAlgorithm::index(int i, int j) {
     return n*i+j;
+}
+
+void ZukerAlgorithm::traceback_2() {
+
 }
 
 void ZukerAlgorithm::traceback() {
@@ -218,6 +204,8 @@ void ZukerAlgorithm::traceback() {
         }
 
         if (j == i) break;
+
+//        cout << "output: " << "i: " << i << "j: " << j << endl;
 
         fij = (ml == 1) ? WM[index(i,j)] : W[index(i,j)];
 
@@ -323,7 +311,7 @@ void ZukerAlgorithm::traceback() {
 //        cout << 14 << endl;
         int l = j-i;
 
-//        cout << "i: " << i << ",j: " << j << " " << cij << endl;
+//        cout << "repeat: " << "i: " << i << ",j: " << j << " " << cij << endl;
 
         if (l+1 == 5 || l+1 == 6 || l+1 == 8) {
             int index;
