@@ -171,6 +171,7 @@ void fill_intl11(const string &filename, int data, char delimeter = ',');
 void fill_intl21(const string &filename, int data, char delimeter = ',');
 void fill_intl22(const string &filename, int data, char delimeter = ',');
 void fill_codon(const string &filename, char delimeter = ',');
+void fill_miscellaneous(const string &filename, char delimeter = ',');
 void scale_params(const string &file = {}, const string &paramspath = {} ,double temp = 37);
 
 inline bool exists (const std::string& name) {

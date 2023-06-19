@@ -1578,7 +1578,82 @@ void fill_codon(const string &filename, char delimeter) {
 
     string line, word;
     int idx = 0, cidx = 0;
+    unordered_map<string, int> miscellaneous = {
+            {"lxc37", 0},
+            {"ML_intern37",1},
+            {"ML_interndH", 2},
+            {"ML_closing37",3},
+            {"ML_closingdH",4},
+            {"ML_BASE37", 5},
+            {"ML_BASEdH", 6},
+            {"MAX_NINIO", 7},
+            {"ninio37", 8},
+            {"niniodH", 9},
+            {"TerminalAU37", 10},
+            {"TerminalAUdH", 11}
+    };
 
+    while (getline(file, line)) {
+        stringstream str(line);
+        idx = 0;
+        while(getline(str, word, delimeter)) {
+            if (idx == 0 && word == "0") break;
+            if (idx == 0) {
+                cidx = miscellaneous[word];
+            } else {
+                switch (cidx) {
+                    case 0:
+                        lxc37 = stod(word);
+                        break;
+                    case 1:
+                        ML_intern37 = stoi(word);
+                        break;
+                    case 2:
+                        ML_interndH = stoi(word);
+                        break;
+                    case 3:
+                        ML_closing37 = stoi(word);
+                        break;
+                    case 4:
+                        ML_closingdH = stoi(word);
+                        break;
+                    case 5:
+                        ML_BASE37 = stoi(word);
+                        break;
+                    case 6:
+                        ML_BASEdH = stoi(word);
+                        break;
+                    case 7:
+                        MAX_NINIO = stoi(word);
+                        break;
+                    case 8:
+                        ninio37 = stoi(word);
+                        break;
+                    case 9:
+                        niniodH = stoi(word);
+                        break;
+                    case 10:
+                        TerminalAU37 = stoi(word);
+                        break;
+                    case 11:
+                        TerminalAUdH = stoi(word);
+                        break;
+                    default:
+                        break;
+                }
+            }
+            idx += 1;
+        }
+    }
+
+}
+
+
+void fill_miscellaneous(const string &filename, char delimeter) {
+    ifstream file(filename);
+
+    string line, word;
+    int idx = 0, cidx = 0;
     while (getline(file, line)) {
         stringstream str(line);
         idx = 0;
@@ -1616,6 +1691,7 @@ void scale_params(const string & file, const string & paramspath, double temp) {
         string intl21h_file = PARAMSPATH + "intl21_H.csv";
         string intl22_file = PARAMSPATH + "intl22.csv";
         string intl22h_file = PARAMSPATH + "intl22_H.csv";
+        string miscellaneous_file = PARAMSPATH + "miscellaneous.csv";
         if (exists(stack_file)) fill_stack(stack_file, 0);
         if (exists(stackh_file)) fill_stack(stackh_file, 1);
         if (exists(mismatchI_file)) fill_mismatch(mismatchI_file, 0);
@@ -1632,7 +1708,7 @@ void scale_params(const string & file, const string & paramspath, double temp) {
         if (exists(intl21h_file)) fill_intl21(intl21h_file, 1);
         if (exists(intl22_file)) fill_intl22(intl22_file, 0);
         if (exists(intl22h_file)) fill_intl22(intl22h_file, 1);
-
+        if (exists(miscellaneous_file)) fill_miscellaneous(miscellaneous_file);
     }
 
 

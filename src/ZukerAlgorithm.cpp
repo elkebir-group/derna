@@ -178,10 +178,6 @@ int ZukerAlgorithm::index(int i, int j) {
     return n*i+j;
 }
 
-void ZukerAlgorithm::traceback_2() {
-
-}
-
 void ZukerAlgorithm::traceback() {
     int s = 0;
     int t = 0;
