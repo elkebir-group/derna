@@ -19,7 +19,6 @@ class ZukerAlgorithm
     vector<int> & seq;
     string bp;
     int n;
-    int minV;
     vector<int> W;
     vector<int> V;
     vector<int> WM;

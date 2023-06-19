@@ -36,9 +36,9 @@ class Zuker {
     vector<int> ava_nucle_m;
     vector<int> codon_selection;
     vector<int> start_index, index_offset;
-    int n, minX, minY, last_idx, minV;
+    int n, minX, minY, last_idx;
     int e0;
-    double e, mindV;
+    double e;
     vector<vector<int>> O_bt, E_bt, M_bt, TM_bt;
 
 

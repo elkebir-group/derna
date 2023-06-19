@@ -33,16 +33,18 @@ Zuker::Zuker(int n, int mode, vector<int> & protein):protein(protein),n(n) {
     }
 
     if (mode == 1) {
+        Z.resize(last_idx, 0);
         E.resize(last_idx, inf);
         M.resize(last_idx, inf);
         TM0.resize(last_idx,inf);
         e0 = inf;
-        minV = 0;
     } else {
+        O.resize(last_idx, 0);
         E1.resize(last_idx, inf);
         M1.resize(last_idx, inf);
         TM.resize(last_idx, inf);
 
+        Z2.resize(last_idx, 0);
         E2.resize(last_idx, inf);
         M2.resize(last_idx, inf);
         TM2.resize(last_idx,inf);
@@ -52,7 +54,6 @@ Zuker::Zuker(int n, int mode, vector<int> & protein):protein(protein),n(n) {
         M_CAI.resize(last_idx, 0);
         TM_CAI.resize(last_idx,0);
         e = inf;
-        mindV = 0;
     }
     OB.resize(last_idx, 0);
     EB.resize(last_idx, 0);
@@ -106,7 +107,6 @@ int Zuker::calculate_Z(ostream &fout) {
     // fill vector E and M first before filling Z
     calculate_E();
     cout << "E done" << endl;
-    Z.resize(last_idx, minV);
 
 
     int nuc_len = 3*n;
@@ -372,7 +372,6 @@ void Zuker::calculate_E() {
                         }
                         min_energy = T[idx1];
 
-                        minV = max(min_energy, minV);
                         Access_E(a,b,i,j,x,y) =  min_energy;
 
                         Access_EB(a,b,i,j,x,y) = t;
@@ -3948,6 +3947,7 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
             for (int i = 0; i < 3; ++i) {
                 for (int j = i; j < 3; ++j) {
                     for (int x = 0; x < n_codon_a; ++x) {
+                        Access_O(a, a, i, j, x, x) = (lambda - 1) * codon_cai[pa][x];
                         Z_CAI[index(a, a, i, j, x, x)] = (lambda - 1) * codon_cai[pa][x];
                         E_CAI[index(a, a, i, j, x, x)] = (lambda - 1) * codon_cai[pa][x];
                         M_CAI[index(a, a, i, j, x, x)] = (lambda - 1) * codon_cai[pa][x];
@@ -3961,26 +3961,6 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
 
     calculate_CAI_E(lambda);
     cout << "E done" << endl;
-
-    O.resize(last_idx, mindV);
-    Z2.resize(last_idx, mindV);
-
-    if (lambda != 1.0) {
-        for (int a = 0; a < n; ++a) {
-            int pa = protein[a];
-            int n_codon_a = n_codon[pa];
-            for (int i = 0; i < 3; ++i) {
-                for (int j = i; j < 3; ++j) {
-                    for (int x = 0; x < n_codon_a; ++x) {
-                        Access_O(a, a, i, j, x, x) = (lambda - 1) * codon_cai[pa][x];
-                        Z_CAI[index(a, a, i, j, x, x)] = (lambda - 1) * codon_cai[pa][x];
-                        E_CAI[index(a, a, i, j, x, x)] = (lambda - 1) * codon_cai[pa][x];
-                        M_CAI[index(a, a, i, j, x, x)] = (lambda - 1) * codon_cai[pa][x];
-                    }
-                }
-            }
-        }
-    }
 
 
     int nuc_len = 3*n;
@@ -4255,8 +4235,6 @@ void Zuker::calculate_CAI_E(double lambda) {
 
 //                        Eout <<    "E - l: " << sigma(a,i) << ",r: " << sigma(b,j) << ",L: " << nucleotides[protein[a]][x][i] << ",R: " << nucleotides[protein[b]][y][j] << ",ret: " << min_energy << endl;
 
-
-                        mindV = max(mindV, min_energy);
                         Access_E1(a,b,i,j,x,y) = min_energy;
 
                         Access_EB(a,b,i,j,x,y) = t;

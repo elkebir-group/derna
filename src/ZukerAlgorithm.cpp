@@ -16,7 +16,7 @@ using namespace std;
 
 ZukerAlgorithm::ZukerAlgorithm(vector<int> & seq, int n):seq(seq),n(n){
 
-    minV = 0;
+    W.resize(n*n, 0);
     V.resize(n*n, inf);
     WM.resize(n*n, inf);
     TM.resize(n*n, inf);
@@ -35,25 +35,26 @@ int ZukerAlgorithm::calculate_W() {
     int min_w = inf;
 
     calculate_V();
-    W.resize(n*n, minV);
     int i = 0;
     for (int j = 1; j < n; ++j) {
         min_w = inf;
         if (basepair(seq[i],seq[j])) {
             min_w = min(min_w, V[index(i,j)] + AU[seq[i]][seq[j]]);
         }
-//        de << 1 << " " << min_w << endl;
 
         min_w = min(min_w, W[index(i,j-1)]);
-//        de << 2 << " " << min_w << endl;
 
+
+        int temp = inf;
         for (int k = 1; k <= j-4; ++k) {
-            min_w = min(min_w, W[index(i,k-1)] + V[index(k,j)] + AU[seq[k]][seq[j]]);
+            temp = min(temp, W[index(i,k-1)] + V[index(k,j)] + AU[seq[k]][seq[j]]);
         }
+
+        min_w = min(min_w, temp);
 //        de << 3 << " " << min_w << endl;
 
         W[index(i,j)] = min_w;
-//        de << "Z - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_w  << endl;
+//        de << "Z - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_w << endl;
     }
 
 
@@ -132,7 +133,7 @@ void ZukerAlgorithm::calculate_V() {
 //            de << "2 " << min_v << endl;
             V[index(i,j)] = min_v;
 
-            minV = max(min_v, minV);
+//            minV = max(min_v, minV);
 
 //            de << "V - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_v  << endl;
 
@@ -205,7 +206,7 @@ void ZukerAlgorithm::traceback() {
 
         if (j == i) break;
 
-//        cout << "output: " << "i: " << i << "j: " << j << endl;
+        cout << "outloop: " << "i: " << i << "j: " << j << endl;
 
         fij = (ml == 1) ? WM[index(i,j)] : W[index(i,j)];
 
@@ -219,7 +220,7 @@ void ZukerAlgorithm::traceback() {
             sector[++s].i = i;
             sector[s].j = j-1;
             sector[s].ml = ml;
-//            cout << 3 << " " << "i: " << i << ",j: " << j-1 << " " << fij << endl;
+            cout << 3 << " " << "i: " << i << ",j: " << j-1 << " " << fij << endl;
             goto OUTLOOP;
         }
 
@@ -448,5 +449,5 @@ void ZukerAlgorithm::get_bp(string & bp) {
         bp[base_pair[a].i] = '(';
         bp[base_pair[a].j] = ')';
     }
-//    cout << bp << endl;
+    cout << bp << endl;
 }
