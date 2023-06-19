@@ -206,7 +206,7 @@ void ZukerAlgorithm::traceback() {
 
         if (j == i) break;
 
-        cout << "outloop: " << "i: " << i << "j: " << j << endl;
+//        cout << "outloop: " << "i: " << i << "j: " << j << endl;
 
         fij = (ml == 1) ? WM[index(i,j)] : W[index(i,j)];
 
@@ -220,7 +220,7 @@ void ZukerAlgorithm::traceback() {
             sector[++s].i = i;
             sector[s].j = j-1;
             sector[s].ml = ml;
-            cout << 3 << " " << "i: " << i << ",j: " << j-1 << " " << fij << endl;
+//            cout << 3 << " " << "i: " << i << ",j: " << j-1 << " " << fij << endl;
             goto OUTLOOP;
         }
 
@@ -449,5 +449,5 @@ void ZukerAlgorithm::get_bp(string & bp) {
         bp[base_pair[a].i] = '(';
         bp[base_pair[a].j] = ')';
     }
-    cout << bp << endl;
+//    cout << bp << endl;
 }
