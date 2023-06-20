@@ -325,7 +325,6 @@ void help()
     printf(" -c -- codon usage table file path\n");
     printf(" -d -- directory to energy parameters\n");
     printf(" ...\n");
-    exit (8);
 }
 
 vector<int> read_rna(string & input) {

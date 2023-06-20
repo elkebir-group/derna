@@ -79,6 +79,7 @@ int main(int argc, char *argv[]) {
                         break;
                     default:
                         help();
+                        return(0);
                 }
             }
             i += 2;
