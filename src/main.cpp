@@ -31,11 +31,9 @@ int main(int argc, char *argv[]) {
     }
 
     try {
-//        cout << argc << endl;
         size_t i = 1;
-        while ((int)i+1 < argc) {
+        while ((int)i+1 <= argc) {
             string param = argv[i];
-//            cout << param << endl;
             if (argv[i][0] == '-') {
                 switch (argv[i][1]) {
                     case 'i':
