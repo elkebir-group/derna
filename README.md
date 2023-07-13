@@ -1,10 +1,54 @@
 # DERNA
 
-## Dependencies
+[![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)] (http://bioconda.github.io/recipes/derna/README.html#package-derna)
+
+DERNA is a tool that enables the design of RNA sequences based on protein sequences. 
+DERNA accepts a protein sequence as input and provides a collection of Pareto optimal solutions consisting of RNA sequences that optimize both minimum free energy and codon adaptation index (CAI). Additionally, DERNA can function as a tool for predicting RNA structures and calculating CAI for given RNA sequences.
+
+## Contents
+
+1. [Installation](#install)
+      * [Using conda](#conda) (recommended)
+      * [Build from source](#compilation) (alternative)
+          * [Dependencies](#dep)
+          * [Compilation](#comp)
+  2. [Usage instructions](#usage)
+      * [Usage Example](#example)
+    
+        
+<a name="install"></a>
+
+## Installation
+
+<a name="conda"></a>
+
+### Using conda
+
+1. Create a new conda environment named "derna" and install dependencies:
+
+   ```bash
+   conda create -n derna
+   ```
+
+2. Then activate the created environment: `conda activate derna`.
+3. Install the package into current environment "derna":
+
+    ```bash
+    conda install -c bioconda derna
+    ```
+
+<a name="compilation"></a>
+
+### Build from source
+
+<a name="dep"></a>
+
+#### Dependencies
 
 * Recent C++ compiler (C++11)
 
-## Compilation instructions
+<a name="comp"></a>
+#### Compilation
 
 ```
 mkdir build
@@ -13,6 +57,7 @@ cmake ..
 make
 ```
 
+<a name="usage"></a>
 ## Usage instructions
 
 ```
@@ -47,10 +92,10 @@ g: minimal gap allowed in Nussinov based model
 rna: input rna file path for eval model
 ```
 
+<a name="example"></a>
+### Examples
 
-## Examples
-
-### Fix $\lambda$ 
+#### Fix $\lambda$ 
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5`
 
@@ -72,7 +117,7 @@ Minimum Free Energy: -148.7
 
 ```
 
-### Sweep (default thresholds) 
+#### Sweep (default thresholds) 
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_sweep.txt -O P15421_sweep -m 1 -s 3`
 
@@ -92,7 +137,7 @@ eval standard CAI: 0.694881
 
 ```
 
-### Only consider MFE
+#### Only consider MFE
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_MFE_only.txt -m 1 -s 1`
 
@@ -112,14 +157,14 @@ zuker cai: 0.694881
 
 ```
 
-### Nussinov based model (Fixed $\lambda$)
+#### Nussinov based model (Fixed $\lambda$)
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_nussinov.txt -m 0 -s 2 -l 0.5 -g 1`
 
-### Specify Codon Usage Table
+#### Specify Codon Usage Table
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -c ./data/InputFiles/sample_codon_usage.csv`
 
-### Specify Energy Parameters
+#### Specify Energy Parameters
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_fixed_lambda.txt -m 1 -s 2 -l 0.5 -d ./data/InputFiles/`
