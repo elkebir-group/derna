@@ -13,7 +13,7 @@ DERNA accepts a protein sequence as input and provides a collection of Pareto op
           * [Dependencies](#dep)
           * [Compilation](#comp)
   2. [Usage instructions](#usage)
-      * [Usage Example](#example)
+      * [Examples](#example)
     
         
 <a name="install"></a>
