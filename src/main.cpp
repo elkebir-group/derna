@@ -1,4 +1,4 @@
-#include <iostream>
+ #include <iostream>
 #include <chrono>
 
 #include "Nussinov.h"
@@ -13,8 +13,7 @@
 #include "params/constants.h"
 
 using namespace std;
-//namespace po = boost::program_options;
-// TODO:
+
 int main(int argc, char *argv[]) {
 
     int n;//len of protein
@@ -24,7 +23,6 @@ int main(int argc, char *argv[]) {
     int model, mode;
     double incr = inf, lambda = inf, threshold = 0.0025, threshold2 = 0.00075;
     int g = inf;
-
 
     if (argc < 2) {
         help();
@@ -43,11 +41,9 @@ int main(int argc, char *argv[]) {
                         output = argv[i+1];
                         break;
                     case 'm':
-//                        cout << argv[i+1] << endl;
                         model = std::stoi(argv[i+1]);
                         break;
                     case 's':
-//                        cout << argv[i+1] << endl;
                         mode = std::stoi(argv[i+1]);
                         break;
                     case 'g':
@@ -105,7 +101,6 @@ int main(int argc, char *argv[]) {
             test = true;
             break;
         default:
-//            cout << model << endl;
             throw invalid_argument("Invalid Input for Model");
     }
 
@@ -124,8 +119,6 @@ int main(int argc, char *argv[]) {
         double cai = getCAI(rna, protein);
         double CAI = evaluate_CAI(rna, protein);
         double MFE = evaluate_MFE(rna, bp);
-
-
 
         fout << "secondary structure: " << bp << endl;
         fout << "eval MFE: " << MFE/100 << endl;
@@ -152,7 +145,6 @@ int main(int argc, char *argv[]) {
             lambda_swipe2 = true;
             break;
         default:
-//            cout << mode << endl;
             throw invalid_argument("Invalid Input for Mode");
     }
 
@@ -190,7 +182,6 @@ int main(int argc, char *argv[]) {
         fout << "integrated energy: " << n_res << endl;
         fout << "CAI: " << CAI << endl;
         fout << "nussinov: " << bp << endl;
-//        fout << "integrated validation: " << lambda*bp+(1-lambda)*CAI << endl;
     }
 
     if (nussinov && lambda_swipe) {
@@ -203,8 +194,6 @@ int main(int argc, char *argv[]) {
         auto start = chrono::high_resolution_clock::now();
         Zuker Z = Zuker(n,mode,protein);
         Z.calculate_Z(fout);
-//        Z.calculate_Z_Mem(fout);
-
         Z.traceback_B();
         auto end = chrono::high_resolution_clock::now();
         long time_take = chrono::duration_cast<chrono::seconds>(end - start).count();
@@ -232,7 +221,6 @@ int main(int argc, char *argv[]) {
         double energy_cai = Z.calculate_CAI_O(fout, lambda);
 
         Z.traceback_B2(lambda);
-//        cout << "traceback done" << endl;
         string zuker_cai_rna(3*n,'.'), zuker_cai_bp(3*n,'.');
         string zuker_cai_rna_X(3*n, '.');
         Z.get_rna_X(zuker_cai_rna_X);
@@ -243,9 +231,7 @@ int main(int argc, char *argv[]) {
         int type = 0;
 
         double CAI_s = evaluate_CAI(zuker_cai_rna,protein,type);
-//        cout << 1 << endl;
         double CAI = evaluate_CAI(zuker_cai_rna,protein,1);
-//        cout << 2 << endl;
         double MFE = evaluate_MFE(zuker_cai_rna);
 
         cout << "lambda: " << lambda << ",O: " << energy_cai << ",cai: " << CAI << ",cai_s: " << CAI_s << ",mfe: " << MFE << ",combined: " << lambda*MFE+(lambda-1)*CAI << endl;
@@ -253,16 +239,13 @@ int main(int argc, char *argv[]) {
         fout << "zuker rna: " << zuker_cai_rna_X << ".size: " << zuker_cai_rna.size() << endl;
         fout << "zuker cai rna: " << zuker_cai_rna << ".size: " << zuker_cai_rna.size() << endl;
 
-
         fout << "Codon Adaptation Index: " << CAI_s << endl;
         fout << "Minimum Free Energy: " << MFE/100 << endl;
     }
 
     if (zuker && lambda_swipe) {
-//        if (lambda == inf) throw invalid_argument("Invalid Value of lambda");
         Zuker Z = Zuker(n,mode,protein);
         Z.lambda_swipe_2(threshold,threshold2, fout,swipe_output);
-
     }
 
     if (zuker && lambda_swipe2) {
