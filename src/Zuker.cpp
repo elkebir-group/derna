@@ -4466,6 +4466,115 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
     cout << "swipe done" << endl;
 }
 
+
+void Zuker::lambda_swipe_3(double threshold, double threshold2, ostream &fout, string & outfile) {
+    double left_lambda;
+    double right_lambda;
+    vector<double> O_buffer,lambda_buffer,F_buffer,CAI_buffer,stand_CAI;
+    vector<double> MFE_buffer, C_buffer;
+    vector<pair<string, vector<double>>> dataset(7);
+    queue<pair<double, double>> lambda;
+    unordered_map<double, double> mfe_map;
+    unordered_map<double, double> cai_map;
+    double left_CAI = 0, left_cai = 0, left_mfe = 0, right_CAI = inf, right_cai = inf, right_mfe = inf;
+
+    lambda.push({EPSILON,1-EPSILON});
+    int idx;
+
+    while (!lambda.empty()) {
+        left_lambda=  lambda.front().first, right_lambda = lambda.front().second;
+        lambda.pop();
+        string left_rna(3*n, '.'), left_bp(3*n, '.'), right_rna(3*n, '.'), right_bp(3*n, '.');
+        if (mfe_map.count(left_lambda) != 0) {
+            left_cai = cai_map[left_lambda];
+            left_mfe = mfe_map[left_lambda];
+        } else {
+            reinit();
+            fout << "lambda: " << left_lambda << endl;
+            double left_O = calculate_CAI_O(fout,left_lambda);
+            traceback_B2(left_lambda);
+            get_rna_cai(left_rna);
+            get_bp(left_bp);
+            left_CAI = evaluate_CAI(left_rna, protein, 1);
+            left_cai = evaluate_CAI(left_rna, protein, 0);
+            left_mfe = evaluate_MFE(left_rna);
+            mfe_map[left_lambda] = left_mfe;
+            cai_map[left_lambda] = left_cai;
+            O_buffer.push_back(left_O);
+            lambda_buffer.push_back(left_lambda);
+            F_buffer.push_back(left_mfe);
+            CAI_buffer.push_back(left_CAI);
+            stand_CAI.push_back(left_cai);
+            idx = index(0, n-1, 0, 2, minX, minY);
+            MFE_buffer.push_back(Z2[idx] / left_lambda);
+            C_buffer.push_back(Z_CAI[idx] / (left_lambda-1));
+            fout << "rna: " << left_rna << endl;
+            fout << "bp: " << left_bp << endl;
+            cout << "lambda: " << left_lambda << ",O: " << left_O << ",cai: " << Z_CAI[idx] / (left_lambda-1) << ",mfe: " << Z2[idx] / left_lambda << ",integrated: " << Z2[idx] + Z_CAI[idx] << endl;
+            cout << "lambda: " << left_lambda << ",O: " << left_O << ",cai: " << left_CAI << ",sCAI: " << left_cai << ",mfe: " << left_mfe << ",combined: " << left_lambda*left_mfe+(left_lambda-1)*left_CAI << endl;
+
+        }
+
+        if (mfe_map.count(right_lambda) != 0) {
+            right_cai = cai_map[right_lambda];
+            right_mfe = mfe_map[right_lambda];
+        } else {
+            reinit();
+            fout << "lambda: " << right_lambda << endl;
+            double right_O = calculate_CAI_O(fout,right_lambda);
+            traceback_B2(right_lambda);
+            get_rna_cai(right_rna);
+            get_bp(right_bp);
+            right_CAI = evaluate_CAI(right_rna, protein, 1);
+            right_cai = evaluate_CAI(right_rna, protein, 0);
+            right_mfe = evaluate_MFE(right_rna);
+            mfe_map[right_lambda] = right_mfe;
+            cai_map[right_lambda] = right_cai;
+            O_buffer.push_back(right_O);
+            lambda_buffer.push_back(right_lambda);
+            F_buffer.push_back(right_mfe);
+            CAI_buffer.push_back(right_CAI);
+            stand_CAI.push_back(right_cai);
+            idx = index(0, n-1, 0, 2, minX, minY);
+            MFE_buffer.push_back(Z2[idx] / right_lambda);
+            C_buffer.push_back(Z_CAI[idx] / (right_lambda-1));
+            fout << "rna: " << right_rna << endl;
+            fout << "bp: " << right_bp << endl;
+            cout << "lambda: " << right_lambda << ",O: " << right_O << ",cai: " << Z_CAI[idx] / (right_lambda-1) << ",mfe: " << Z2[idx] / right_lambda << ",integrated: " << Z2[idx] + Z_CAI[idx] << endl;
+            cout << "lambda: " << right_lambda << ",O: " << right_O << ",cai: " << right_CAI << ",sCAI: " << right_cai << ",mfe: " << right_mfe << ",combined: " << right_lambda*right_mfe+(right_lambda-1)*right_CAI << endl;
+
+        }
+        if (!compare(left_cai, right_cai) && !compare(left_mfe, right_mfe)) {
+            cout << "lamda diff: " << right_lambda-left_lambda << endl;
+            if (right_lambda < threshold) {
+                if (!compare(left_lambda,right_lambda,threshold2)) {
+                    double m = left_lambda * 0.4 + right_lambda * 0.6;
+                    lambda.push({left_lambda, m});
+                    lambda.push({m, right_lambda});
+                }
+            } else {
+                if (!compare(left_lambda,right_lambda,threshold)) {
+                    double m = left_lambda * 0.4 + right_lambda * 0.6;
+                    lambda.push({left_lambda, m});
+                    lambda.push({m, right_lambda});
+                }
+            }
+
+        }
+    }
+    cout << "size : " << lambda.size() << endl;
+    fout << "left lambda: " << left_lambda << ",right lambda: " << right_lambda << endl;
+    dataset[0] = make_pair("lambda", lambda_buffer);
+    dataset[1] = make_pair("rc_mfe", F_buffer);
+    dataset[2] = make_pair("rc_CAI", CAI_buffer);
+    dataset[3] = make_pair("rc_sCAI", stand_CAI);
+    dataset[4] = make_pair('O', O_buffer);
+    dataset[5] = make_pair("mfe", MFE_buffer);
+    dataset[6] = make_pair("CAI", C_buffer);
+    write_csv(outfile + ".csv", dataset);
+    cout << "swipe done" << endl;
+}
+
 void Zuker::get_bp(string & bp) {
     for (int a = 1; a <= bp_bond[0].i; ++a) {
         bp[bp_bond[a].i] = '(';

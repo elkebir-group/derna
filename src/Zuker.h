@@ -189,6 +189,8 @@ public:
      */
     void lambda_swipe_2(double, double, ostream& fout, string & outfile);
 
+    void lambda_swipe_3(double, double, ostream& fout, string & outfile);
+
     /**
      * Access vector Z given protein position, codon selection and codon index (a, b, i, j, x, y)
      *
