@@ -17,10 +17,12 @@ using namespace std;
 int main(int argc, char *argv[]) {
 
     int n;//len of protein
-    string input,output,rna_file,swipe_output;
+    string input = "../data/uniprotSeq/P15421.fasta";
+    string output = "output.txt";
+    string rna_file,swipe_output;
     string codon_file = {};
     string param_path = {};
-    int model, mode;
+    int model = 1, mode = 1;
     double incr = inf, lambda = inf, threshold = 0.0025, threshold2 = 0.00075;
     int g = inf;
 

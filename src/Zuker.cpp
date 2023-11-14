@@ -1945,7 +1945,7 @@ void Zuker::traceback() {
                             }
 
                             sector[++s].a = a;
-                            sector[a].i = i, sector[s].b = tb, sector[s].j = tj, sector[s].x = x, sector[s].y = kj, sector[s].ml = 0;
+                            sector[s].i = i, sector[s].b = tb, sector[s].j = tj, sector[s].x = x, sector[s].y = kj, sector[s].ml = 0;
 
                             goto LABEL1;
                         }
@@ -2629,7 +2629,7 @@ void Zuker::traceback_B() {
                                     }
 
                                     sector[++s].a = a;
-                                    sector[a].i = i, sector[s].b = tb, sector[s].j = tj, sector[s].x = x, sector[s].y = kj, sector[s].ml = 0;
+                                    sector[s].i = i, sector[s].b = tb, sector[s].j = tj, sector[s].x = x, sector[s].y = kj, sector[s].ml = 0;
                                     if (!traced_ab && !traced_ij) {
                                         cout << a << " " << b << " " << i << " " << j << " " << x << " " << y << " " << oij << endl;
                                         exit(2);
@@ -3434,7 +3434,7 @@ void Zuker::traceback_B2(double lambda) {
                     }
 
                     sector[++s].a = a;
-                    sector[a].i = i, sector[s].b = al, sector[s].j = il, sector[s].x = x, sector[s].y = xl, sector[s].ml = 0;
+                    sector[s].i = i, sector[s].b = al, sector[s].j = il, sector[s].x = x, sector[s].y = xl, sector[s].ml = 0;
 
 
                     a = br;
