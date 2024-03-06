@@ -23,6 +23,9 @@ class ZukerAlgorithm
     vector<int> V;
     vector<int> WM;
     vector<int> TM;
+    vector<int> WB;
+    vector<int> VB;
+    vector<int> MB;
     vector<st> sector;
     vector<bond> base_pair;
     vector<char> to_char;

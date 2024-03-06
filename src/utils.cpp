@@ -404,7 +404,7 @@ double evaluate_MFE(vector<int> & rna, string & bp) {
     ZukerAlgorithm Zu = ZukerAlgorithm(rna,l);
     double mfe = Zu.calculate_W();
     if (!bp.empty()) {
-        Zu.traceback();
+        Zu.traceback_2();
         Zu.get_bp(bp);
     }
     return mfe;

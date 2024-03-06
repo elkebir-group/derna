@@ -20,6 +20,9 @@ ZukerAlgorithm::ZukerAlgorithm(vector<int> & seq, int n):seq(seq),n(n){
     V.resize(n*n, inf);
     WM.resize(n*n, inf);
     TM.resize(n*n, inf);
+    WB.resize(n*n, 0);
+    VB.resize(n*n, 0);
+    MB.resize(n*n, 0);
     sector.resize(n);
     base_pair.resize(n);
     bp.resize(n, '.');
@@ -32,29 +35,40 @@ ZukerAlgorithm::ZukerAlgorithm(vector<int> & seq, int n):seq(seq),n(n){
 ZukerAlgorithm::~ZukerAlgorithm() = default;
 
 int ZukerAlgorithm::calculate_W() {
-    int min_w = inf;
+    int min_w = inf, energy = inf, t = 0;
 
     calculate_V();
     int i = 0;
     for (int j = 1; j < n; ++j) {
-        min_w = inf;
+        min_w = inf, energy = inf, t = 0;
         if (basepair(seq[i],seq[j])) {
             min_w = min(min_w, V[index(i,j)] + AU[seq[i]][seq[j]]);
+            if (energy > min_w) {
+                energy = min_w;
+                t = -1;
+            }
         }
+//        de << 1 << " " << min_w << endl;
 
         min_w = min(min_w, W[index(i,j-1)]);
-
-
-        int temp = inf;
-        for (int k = 1; k <= j-4; ++k) {
-            temp = min(temp, W[index(i,k-1)] + V[index(k,j)] + AU[seq[k]][seq[j]]);
+        if (energy > min_w) {
+            energy = min_w;
+            t = -2;
         }
+//        de << 2 << " " << min_w << endl;
 
-        min_w = min(min_w, temp);
+        for (int k = 1; k <= j-4; ++k) {
+            min_w = min(min_w, W[index(i,k-1)] + V[index(k,j)] + AU[seq[k]][seq[j]]);
+        }
+        if (energy > min_w) {
+            energy = min_w;
+            t = -4;
+        }
 //        de << 3 << " " << min_w << endl;
 
         W[index(i,j)] = min_w;
-//        de << "Z - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_w << endl;
+        WB[index(i,j)] = t;
+//        de << "Z - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_w  << endl;
     }
 
 
@@ -62,7 +76,7 @@ int ZukerAlgorithm::calculate_W() {
 }
 
 void ZukerAlgorithm::calculate_V() {
-    int min_v = inf;
+    int min_v = inf, energy = inf, t = 0;
     for (int l = 4; l < n; ++l) {
         for (int i = 0; i < n - l; ++i) {
             int j = i + l;
@@ -70,7 +84,7 @@ void ZukerAlgorithm::calculate_V() {
                 calculate_WM(i,j);
                 continue;
             }
-            min_v = inf;
+            min_v = inf, energy = inf, t = 0;
 
             if (l+1 == 5 || l+1 == 6 || l+1 == 8) {
 //                int index;
@@ -104,6 +118,10 @@ void ZukerAlgorithm::calculate_V() {
 
             min_v = min(min_v, hairpin_loop(seq[i],seq[j],seq[i+1],seq[j-1],l-1));
 
+            if (energy > min_v) {
+                energy = min_v;
+                t = -1;
+            }
 
 //            de << "1 " << min_v << endl;
 
@@ -128,12 +146,19 @@ void ZukerAlgorithm::calculate_V() {
                     min_v = min(min_v, internal_min + V[index(p,q)]);
                  }
             }
+            if (energy > min_v) {
+                energy = min_v;
+                t = -4;
+            }
 
             min_v = min(min_v, TM[index(i+1,j-1)] + AU[seq[i]][seq[j]] + ML_closing + ML_intern);
+            if (energy > min_v) {
+                energy = min_v;
+                t = -3;
+            }
 //            de << "2 " << min_v << endl;
             V[index(i,j)] = min_v;
-
-//            minV = max(min_v, minV);
+            VB[index(i,j)] = t;
 
 //            de << "V - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_v  << endl;
 
@@ -151,16 +176,28 @@ void ZukerAlgorithm::assign_seq2str(string & s, int start) {
 }
 
 void ZukerAlgorithm::calculate_WM(int i, int j) {
-    int min_multi = inf;
+    int min_multi = inf, energy = inf, t = 0;
 
     if (basepair(seq[i],seq[j])) {
         min_multi = min(min_multi, V[index(i,j)] + AU[seq[i]][seq[j]] + ML_intern);
+        if (energy > min_multi) {
+            energy = min_multi;
+            t = -1;
+        }
     }
 
     if (i+1 < j) {
         min_multi = min(min_multi, WM[index(i+1,j)] + ML_BASE);
+        if (energy > min_multi) {
+            energy = min_multi;
+            t = -2;
+        }
 
         min_multi = min(min_multi, WM[index(i,j-1)] + ML_BASE);
+        if (energy > min_multi) {
+            energy = min_multi;
+            t = -3;
+        }
     }
 //    de << 2 << " " << min_multi << endl;
     int energy_b = inf;
@@ -169,13 +206,155 @@ void ZukerAlgorithm::calculate_WM(int i, int j) {
     }
     TM[index(i,j)] = min(energy_b, TM[index(i,j)]);
     min_multi = min(min_multi, energy_b);
+    if (energy > min_multi) {
+        energy = min_multi;
+        t = -6;
+    }
 //    de << 3 << " " << min_multi << endl;
 //    de << "M - l: " << i << ",r: " << j << ",L: " << seq[i] << ",R: " << seq[j] << ",ret: " << min_multi  << endl;
     WM[index(i,j)] = min_multi;
+    MB[index(i,j)] = t;
 }
 
 int ZukerAlgorithm::index(int i, int j) {
     return n*i+j;
+}
+
+void ZukerAlgorithm::traceback_2() {
+    int s = 0;
+    int t = 0;
+    sector[++s].i = 0;
+    sector[s].j = n-1;
+    sector[s].ml = 0;
+
+    OUTLOOP:
+    while (s > 0) {
+        int fij, fi, cij, ci;
+        int traced, i1, j1, k, p, q, bt;
+
+        int i = sector[s].i;
+        int j = sector[s].j;
+        int ml = sector[s--].ml;
+
+        if (j == i) break;
+
+        int idx = index(i, j);
+
+        if (ml == 0) {
+            bt = WB[idx];
+            fij = W[idx];
+            switch (bt) {
+                case -1:
+//                    fi = V[idx] + AU[seq[i]][seq[j]];
+                    base_pair[++t].i = i;
+                    base_pair[t].j   = j;
+                    goto repeat;
+                    break;
+                case -2:
+//                    fi = W[index(i,j-1)];
+                    sector[++s].i = i, sector[s].j = j-1, sector[s].ml = ml;
+                    goto OUTLOOP;
+                    break;
+                case -4:
+                    for (k = 1; k <= j-4; ++k) {
+                        fi = W[index(i,k-1)] + V[index(k,j)] + AU[seq[k]][seq[j]];
+                        if (fi == fij) {
+                            sector[++s].i = i, sector[s].j = k-1, sector[s].ml = ml;
+
+                            base_pair[++t].i = i;
+                            base_pair[t].j   = j;
+
+                            i = k;
+                            goto repeat;
+                            break;
+                        }
+                    }
+                default:
+                    cout << i << " " << j << " " << bt << endl;
+                    exit(1);
+            }
+        }
+        else {
+            bt = MB[idx];
+            fij = WM[idx];
+            switch (bt) {
+                case -1:
+                    base_pair[++t].i = i;
+                    base_pair[t].j = j;
+                    goto repeat;
+                    break;
+                case -2:
+//                    fi = WM[i + 1, j] + ML_BASE;
+                    sector[++s].i = i+1, sector[s].j = j, sector[s].ml = ml;
+                    goto OUTLOOP;
+                    break;
+                case -3:
+//                    fi = WM[i, j - 1] + ML_BASE;
+                    sector[++s].i = i, sector[s].j = j-1, sector[s].ml = ml;
+                    goto OUTLOOP;
+                    break;
+                case -6:
+                    for (k = i + 4; k <= j-4; ++k) {
+                        fi = WM[index(i,k-1)] + WM[index(k,j)];
+                        if (fi == fij) {
+                            sector[++s].i = i, sector[s].j = k-1, sector[s].ml = ml;
+                            sector[++s].i = k, sector[s].j = j, sector[s].ml = ml;
+
+                            goto OUTLOOP;
+                            break;
+                        }
+                    }
+                default:
+                    cout << i << " " << j << " " << bt << endl;
+                    exit(2);
+            }
+        }
+
+        repeat:
+        cij = V[index(i,j)];
+
+        idx = index(i,j);
+        bt = VB[idx];
+        switch (bt) {
+            case -1:
+                goto OUTLOOP;
+            case -3:
+                sector[++s].i = i+1, sector[s].j = j-1;
+                break;
+            case -4:
+                sector[s+1].ml = sector[s+2].ml = 1;
+                for (p = i+1; p <= min(j-5, i+MAXLOOP+1); ++p) {
+                    int minq = j-i+p-MAXLOOP-2;
+                    if (minq < p+4) minq = p+4;
+                    int ll = p-i;
+                    for (q = minq; q < j; q++) {
+                        if (!basepair(seq[p],seq[q])) continue;
+                        int lr = j-q;
+                        if (ll == 1 && lr == 1) {
+                            ci = stacking(seq[i],seq[j],seq[p],seq[q]);
+                        }
+                        else if (ll == 1 || lr == 1) {
+                            ci = bulge_loop(seq[i],seq[j],seq[p],seq[q],max(ll,lr)-1);
+                        }
+                        else {
+                            ci = interior_loop(seq[i],seq[j],seq[p],seq[q],seq[i+1],seq[j-1],seq[p-1],seq[q+1],ll-1,lr-1);
+                        }
+                        if (cij == ci + V[index(p,q)]) {
+                            base_pair[++t].i = p;
+                            base_pair[t].j = q;
+                            i = p, j = q;
+                            goto repeat;
+                            break;
+                        }
+                    }
+                }
+            default:
+                cout << i << " " << j << " " << bt << endl;
+                exit(3);
+        }
+    }
+
+    base_pair[0].i = t;
 }
 
 void ZukerAlgorithm::traceback() {
@@ -202,7 +381,7 @@ void ZukerAlgorithm::traceback() {
 
         if (j == i) break;
 
-//        cout << "outloop: " << "i: " << i << "j: " << j << endl;
+//        cout << "output: " << "i: " << i << "j: " << j << endl;
 
         fij = (ml == 1) ? WM[index(i,j)] : W[index(i,j)];
 
