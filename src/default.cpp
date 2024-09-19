@@ -1524,7 +1524,7 @@ void fill_intl22(const string &filename, int data, char delimeter) {
     }
 }
 
-void fill_codon(const string &filename, char delimeter) {
+void fill_miscellaneous(const string &filename, char delimeter) {
     ifstream file(filename);
 
     string line, word;
@@ -1600,7 +1600,7 @@ void fill_codon(const string &filename, char delimeter) {
 }
 
 
-void fill_miscellaneous(const string &filename, char delimeter) {
+void fill_codon(const string &filename, char delimeter) {
     ifstream file(filename);
 
     string line, word;
@@ -1626,23 +1626,23 @@ void scale_params(const string & file, const string & paramspath, double temp) {
     double tempf = (temp + K0) / Tmeasure;
 
     if (!paramspath.empty()) {
-        string stack_file = PARAMSPATH + "stack.csv";
-        string stackh_file = PARAMSPATH + "stack_H.csv";
-        string mismatchI_file = PARAMSPATH + "mismatchI.csv";
-        string mismatchIh_file = PARAMSPATH + "mismatchI_H.csv";
-        string mismatchH_file = PARAMSPATH + "mismatchH.csv";
-        string mismatchHh_file = PARAMSPATH + "mismatchH_H.csv";
-        string mismatch1nI_file = PARAMSPATH + "mismatch1nI.csv";
-        string mismatch1nIh_file = PARAMSPATH + "mismatch1nI_H.csv";
-        string mismatch23I_file = PARAMSPATH + "mismatch23I.csv";
-        string mismatch23Ih_file = PARAMSPATH + "mismatch23I_H.csv";
-        string intl11_file = PARAMSPATH + "intl11.csv";
-        string intl11h_file = PARAMSPATH + "intl11_H.csv";
-        string intl21_file = PARAMSPATH + "intl21.csv";
-        string intl21h_file = PARAMSPATH + "intl21_H.csv";
-        string intl22_file = PARAMSPATH + "intl22.csv";
-        string intl22h_file = PARAMSPATH + "intl22_H.csv";
-        string miscellaneous_file = PARAMSPATH + "miscellaneous.csv";
+        string stack_file = paramspath + "stack.csv";
+        string stackh_file = paramspath + "stack_H.csv";
+        string mismatchI_file = paramspath + "mismatchI.csv";
+        string mismatchIh_file = paramspath + "mismatchI_H.csv";
+        string mismatchH_file = paramspath + "mismatchH.csv";
+        string mismatchHh_file = paramspath + "mismatchH_H.csv";
+        string mismatch1nI_file = paramspath + "mismatch1nI.csv";
+        string mismatch1nIh_file = paramspath + "mismatch1nI_H.csv";
+        string mismatch23I_file = paramspath + "mismatch23I.csv";
+        string mismatch23Ih_file = paramspath + "mismatch23I_H.csv";
+        string intl11_file = paramspath + "intl11.csv";
+        string intl11h_file = paramspath + "intl11_H.csv";
+        string intl21_file = paramspath + "intl21.csv";
+        string intl21h_file = paramspath + "intl21_H.csv";
+        string intl22_file = paramspath + "intl22.csv";
+        string intl22h_file = paramspath + "intl22_H.csv";
+        string miscellaneous_file = paramspath + "miscellaneous.csv";
         if (exists(stack_file)) fill_stack(stack_file, 0);
         if (exists(stackh_file)) fill_stack(stackh_file, 1);
         if (exists(mismatchI_file)) fill_mismatch(mismatchI_file, 0);
