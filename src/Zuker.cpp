@@ -87,8 +87,8 @@ void Zuker::init_values() {
         for (int x = 0; x < n_codon[protein[a]]; ++x) {
             for (int i = 0; i < 3; ++i) {
                 int idx = index(a,x,i);
-                ava_nucle_p[idx] = ava_nucleotides_int(a,x,i,1);
-                ava_nucle_m[idx] = ava_nucleotides_int(a,x,i,-1);
+                if (a < n-1) ava_nucle_p[idx] = ava_nucleotides_int(a,x,i,1);
+                if (a > 0) ava_nucle_m[idx] = ava_nucleotides_int(a,x,i,-1);
             }
         }
     }
@@ -1051,10 +1051,12 @@ double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int 
                     int tt = cx + cy + ch + ck;
                     int ppc = protein[c-1], pnd = protein[d+1];
                     int pna = protein[a+1], ppb = protein[b-1];
-                    const int n_codon_pc = n_codon[ppc];
-                    const int n_codon_dn = n_codon[pnd];
-                    const int n_codon_an = n_codon[pna];
-                    const int n_codon_pb = n_codon[ppb];
+                    const int safe_n_codon = n;
+
+                    const int n_codon_dn = (pnd >= 0 && pnd < safe_n_codon) ? n_codon[pnd] : 0;
+                    const int n_codon_pc = (ppc >= 0 && ppc < safe_n_codon) ? n_codon[ppc] : 0;
+                    const int n_codon_an = (pna >= 0 && pna < safe_n_codon) ? n_codon[pna] : 0;
+                    const int n_codon_pb = (ppb >= 0 && ppb < safe_n_codon) ? n_codon[ppb] : 0;
 
 
                     if (ll == 1 && lr == 1) {
