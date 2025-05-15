@@ -1605,20 +1605,36 @@ void fill_codon(const string &filename, char delimeter) {
 
     string line, word;
     int idx = 0, cidx = 0;
+    vector<string> codons;
     while (getline(file, line)) {
         stringstream str(line);
         idx = 0;
         while(getline(str, word, delimeter)) {
-            if (idx == 0 && word.empty()) break;
+            if (idx == 0 && word.empty()) {
+                codons.clear();
+                while(getline(str, word, delimeter)) {
+                    if (!word.empty() && word.length() == 3) {
+                        codons.push_back(word);
+                    }
+                }
+                break;
+            };
             if (idx == 0) {
                 cidx = aa_index(word[0]);
-            } else {
-                codon_usage[cidx][idx-1] = stof(word);
+            } else if (idx - 1 < codons.size()) {
+                vector<int> numeric_codon(3);
+//                cout << codons[idx-1] << endl;
+                for (int i = 0; i < 3; i++) {
+                    numeric_codon[i] = n_index(codons[idx-1][i]);
+                }
+                // Get the codon's index and update usage
+                int codon_idx = getxPos(cidx, numeric_codon);
+//                cout << cidx << " " << codon_idx << endl;
+                codon_usage[cidx][codon_idx] = stof(word);
             }
             idx += 1;
         }
     }
-
 }
 
 void scale_params(const string & file, const string & paramspath, double temp) {
