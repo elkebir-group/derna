@@ -5,6 +5,7 @@
 #ifndef RNA_DESIGN_ZUKERALGORITHM_H
 #define RNA_DESIGN_ZUKERALGORITHM_H
 
+#include <iostream>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -38,7 +39,7 @@ public:
     void calculate_V();
     int calculate_W();
     void calculate_WM(int, int);
-    inline int hairpin_loop(int, int, int,int,int) const;
+    inline int hairpin_loop(int, int, int,int,int,int) const;
     inline int stacking(int, int, int,int) const;
     inline int bulge_loop(int, int, int, int, int) const;
     inline int interior_loop(int, int, int, int,int,int,int,int,int,int) const;
@@ -48,7 +49,7 @@ public:
     void get_bp(string &);
 
 private:
-    void assign_seq2str(string &, int);
+    void assign_seq2str(string &, int) const;
 };
 
 inline int ZukerAlgorithm::bulge_loop(int i, int j, int h, int k, int l) const {
@@ -122,14 +123,42 @@ inline int ZukerAlgorithm::interior_loop(int i, int j, int h, int k, int i1, int
     return energy;
 }
 
-inline int ZukerAlgorithm::hairpin_loop(int xi, int yj, int xi_, int _yj, int l) const {
+inline int ZukerAlgorithm::hairpin_loop(int xi, int yj, int xi_, int _yj, int l, int i) const {
     int hairpin_energy;
     int type = BP_pair[xi+1][yj+1];
 
     // add penalty based on size
     hairpin_energy = (l <= 30) ? hairpins[l] : hairpins[30]+(int)(lxc*Log[l]);//hairpinLoops[l];
 
-    if (l == 3) return hairpin_energy + AU[xi][yj];
+    if (l == 3 || l == 4 || l == 6) {
+    //                int index;
+        string s(l + 2, '.');
+        assign_seq2str(s, i);
+    //                cout << s << endl;
+
+        switch (l) {
+            case 3:
+                if (hairpinE.count(s) > 0) {
+                    return hairpinE[s];
+                }
+                return hairpin_energy + AU[xi][yj];
+            case 4:
+                if (hairpinE.count(s) > 0) {
+                    return hairpinE[s];
+                }
+                break;
+            case 6:
+                if (hairpinE.count(s) > 0) {
+                    return hairpinE[s];
+                }
+                break;
+            default:
+                cout << s << " " << l << endl;
+                exit(5);
+                break;
+        }
+
+    }
 
     // add penalty for a terminal mismatch
     hairpin_energy += mismatchH[type][xi_+1][_yj+1];//T_mm[stack_index(xi, _yj, yj, xi_)];

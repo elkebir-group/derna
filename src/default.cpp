@@ -554,6 +554,7 @@ double codon_usage[20][6] = {
 PUBLIC int max_cai_pos[20] = {1,3,1,1,1,1,1,1,1,0,1,3,1,1,1,5,1,0,1,3};
 
 // (a == 0 && b == 3) || (a == 3 && b == 0) || (a == 2 && b == 3) || (a == 3 && b == 2)
+// A, C, G, U
 PUBLIC int AU[4][4] = {
         {0,0,0,1},
         {0,0,0,0},
@@ -1623,13 +1624,11 @@ void fill_codon(const string &filename, char delimeter) {
                 cidx = aa_index(word[0]);
             } else if (idx - 1 < codons.size()) {
                 vector<int> numeric_codon(3);
-//                cout << codons[idx-1] << endl;
                 for (int i = 0; i < 3; i++) {
                     numeric_codon[i] = n_index(codons[idx-1][i]);
                 }
                 // Get the codon's index and update usage
                 int codon_idx = getxPos(cidx, numeric_codon);
-//                cout << cidx << " " << codon_idx << endl;
                 codon_usage[cidx][codon_idx] = stof(word);
             }
             idx += 1;

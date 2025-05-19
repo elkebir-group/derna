@@ -1,4 +1,4 @@
- #include <iostream>
+#include <iostream>
 #include <chrono>
 
 #include "Nussinov.h"
@@ -113,6 +113,7 @@ int main(int argc, char *argv[]) {
 
     if (test) {
         if (rna_file.empty()) throw invalid_argument("RNA Input File Needed in Test Mode");
+        if (input.empty()) throw invalid_argument("Protein Input File Needed in Test Mode");
         vector<int> protein = read_fasta(input, fout);
 
         vector<int> rna = read_rna(rna_file);

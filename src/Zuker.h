@@ -464,6 +464,9 @@ private:
      * @return minimum hairpin folding energy among all possible sequences between la and lb
      */
     int hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y, int an_int, int bp_int) const;
+
+    tuple<int, vector<int>> hairpin_special(int l, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int xi_, int _yj, int i, int j, int x, int y) const;
+
     int hairpin(int,int,int,int,int,int,int) const;
 
     /**
@@ -483,7 +486,7 @@ private:
      * @return minimum folding energy of multiloop structure
      */
     int multi_loop(int a, int b, int i, int j, int x, int y, int pa, int pb, int n_codon_an, int n_codon_bp);
-    int multi_loop_Mem(int a, int b, int i, int j, int x, int y, int pa, int pb, int n_codon_an, int n_codon_bp);
+
     double multi_loop_CAI(double,int,int,int,int,int,int,int,int,int,int);
 
 
@@ -512,6 +515,8 @@ private:
      * @return minimum energy of hairpin structure among all possible sequences between la and lb, considering CAI
      */
     double hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y);
+
+    tuple<double, double, double, vector<int>> hairpin_special_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int x1, int y1, int xi, int xi_, int _yj, int yj, int x, int y, int i, int j);
 
     /**
      * Return codon adptation index compensation for hairpin structure
@@ -645,8 +650,6 @@ inline int Zuker::interior_loop(int i, int j, int h, int k, int i1, int j1, int 
         energy = (n1+n2<=MAXLOOP)?(internal_loop[n1+n2]) : (internal_loop[30]+(int)(lxc*Log[n1+n2]));//log((n1+n2)/30.)
         energy += min(MAX_NINIO, (nl-ns)*ninio);
         energy += mismatchI[type][i1+1][j1+1] + mismatchI[type2][k1+1][h1+1];
-
-
     }
     return energy;
 }
@@ -682,7 +685,7 @@ inline int Zuker::hairpin_loop(int xi, int yj, int xi_, int _yj, int l) {
 
     // add penalty based on size
     hairpin_energy = (l <= 30) ? hairpins[l] : hairpins[30]+(int)(lxc*Log[l]);//hairpinLoops[l]; // log((l)/30.)
-
+//    cout << "l: " << l << " " << xi << " " <<  _yj << " " << yj << " " << xi_ << endl;
     if (l == 3) return hairpin_energy + AU[xi][yj];
 
     // add penalty for a terminal mismatch

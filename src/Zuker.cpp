@@ -388,6 +388,171 @@ int Zuker::hairpin(int la, int lb, int l, int xi, int yj, int an_int, int bp_int
     return hairpin_energy;
 }
 
+
+tuple<int, vector<int>> Zuker::hairpin_special(int l, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp,
+                           int xi, int yj, int xi_, int _yj, int i, int j, int x, int y) const {
+    int hairpin_energy = inf;
+    vector<int> values;
+    string s;
+    switch (l) {
+        int xi2_, _2yj, xi3_, _3yj;
+        int temp_xi_, temp_yj;
+
+        case 4:
+            if (i <= 1) {
+                temp_xi_ = nucleotides[pa][x][i+1];
+                temp_yj = nucleotides[pb][y][j-1];
+                if (temp_xi_ != xi_ || temp_yj != _yj) break;
+                if (i == 0) {
+                    xi2_ = nucleotides[pa][x][2];
+                } else {
+                    xi2_ = nucleotides[pb][y][0];
+                }
+                s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_yj],to_char[yj]};
+
+                if (hairpinE.count(s) > 0) {
+                    if (hairpin_energy > hairpinE[s]) {
+                        hairpin_energy = hairpinE[s];
+                        values =  {xi_,xi2_,_yj};
+                    }
+                }
+
+            } else {
+                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                    temp_xi_ = nucleotides[pna][x1][0];
+                    xi2_ = nucleotides[pna][x1][1];
+                    temp_yj = nucleotides[pna][x1][2];
+                    if (temp_xi_ != xi_ || temp_yj != _yj) continue;
+                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_yj],to_char[yj]};
+
+                    if (hairpinE.count(s) > 0) {
+                        if (hairpin_energy > hairpinE[s]) {
+                            hairpin_energy = hairpinE[s];
+                            values =  {xi_,xi2_,_yj};
+                        }
+                    }
+                }
+            }
+            break;
+        case 5:
+            if (i == 0) {
+                temp_xi_ = nucleotides[pa][x][1];
+                xi2_ = nucleotides[pa][x][2];
+                _2yj = nucleotides[pb][y][0];
+                temp_yj = nucleotides[pb][y][1];
+                if (temp_xi_ != xi_ || temp_yj != _yj) break;
+                s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
+
+                if (hairpinE.count(s) > 0) {
+                    if (hairpin_energy > hairpinE[s]) {
+                        hairpin_energy = hairpinE[s];
+                        values = {xi_,xi2_,_2yj,_yj};
+                    }
+                }
+
+            } else if (i == 1) {
+                temp_xi_ = nucleotides[pa][x][2];
+                if (temp_xi_ != xi_) break;
+                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                    xi2_ = nucleotides[pna][x1][0];
+                    _2yj = nucleotides[pna][x1][1];
+                    temp_yj = nucleotides[pna][x1][2];
+                    if (temp_yj != _yj) continue;
+                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
+
+                    if (hairpinE.count(s) > 0) {
+                        if (hairpin_energy > hairpinE[s]) {
+                            hairpin_energy = hairpinE[s];
+                            values = {xi_,xi2_,_2yj,_yj};
+                        }
+                    }
+                }
+            } else {
+                temp_yj = nucleotides[pb][y][0];
+                if (temp_yj != _yj) break;
+                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                    temp_xi_ = nucleotides[pna][x1][0];
+                    if (temp_xi_ != xi_) continue;
+                    xi2_ = nucleotides[pna][x1][1];
+                    _2yj = nucleotides[pna][x1][2];
+                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
+
+                    if (hairpinE.count(s) > 0) {
+                        if (hairpin_energy > hairpinE[s]) {
+                            hairpin_energy = hairpinE[s];
+                            values = {xi_,xi2_,_2yj,_yj};
+                        }
+                    }
+                }
+            }
+            break;
+        case 7:
+            if (i <= 1) {
+                temp_xi_ = nucleotides[pa][x][i+1];
+                temp_yj = nucleotides[pb][y][j-1];
+                if (temp_xi_ != xi_ || temp_yj != _yj) break;
+                if (i == 0) {
+                    xi2_ = nucleotides[pa][x][2];
+                    for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                        xi3_ = nucleotides[pna][x1][0];
+                        _3yj = nucleotides[pna][x1][1];
+                        _2yj = nucleotides[pna][x1][2];
+                        s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
+
+                        if (hairpinE.count(s) > 0) {
+                            if (hairpin_energy > hairpinE[s]) {
+                                hairpin_energy = hairpinE[s];
+                                values = {xi_,xi2_,xi3_,_3yj,_2yj,_yj};
+                            }
+                        }
+                    }
+                } else {
+                    _2yj = nucleotides[pb][y][0];
+                    for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                        xi2_ = nucleotides[pna][x1][0];
+                        xi3_ = nucleotides[pna][x1][1];
+                        _3yj = nucleotides[pna][x1][2];
+                        s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
+//
+                        if (hairpinE.count(s) > 0) {
+                            if (hairpin_energy > hairpinE[s]) {
+                                hairpin_energy = hairpinE[s];
+                                values = {xi_,xi2_,xi3_,_3yj,_2yj,_yj};
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                    temp_xi_ = nucleotides[pna][x1][0];
+                    if (temp_xi_ != xi_) continue;
+                    xi2_ = nucleotides[pna][x1][1];
+                    xi3_ = nucleotides[pna][x1][2];
+                    for (int y1 = 0; y1 < n_codon_bp; ++y1) {
+                        _3yj = nucleotides[ppb][y1][0];
+                        _2yj = nucleotides[ppb][y1][1];
+                        temp_yj = nucleotides[ppb][y1][2];
+                        if (temp_yj != _yj) continue;
+                        s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
+//
+                        if (hairpinE.count(s) > 0) {
+                            if (hairpin_energy > hairpinE[s]) {
+                                hairpin_energy = hairpinE[s];
+                                values = {xi_,xi2_,xi3_,_3yj,_2yj,_yj};
+                            }
+                        }
+                    }
+                }
+            }
+
+            break;
+        default:
+            break;
+    }
+    return {hairpin_energy, values};
+}
+
+
 int Zuker::hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y, int an_int, int bp_int) const {
     int hairpin_energy = inf;
     string s;
@@ -530,15 +695,20 @@ int Zuker::hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int 
     }
     int temp_e;
     // general case
+
     for (int xi_ = 0; xi_ < 4; ++xi_) {
         if (((1 << xi_) & an_int) == 0) continue;
         for (int _yj = 0; _yj < 4; ++_yj) {
             if (((1 << _yj) & bp_int) == 0) continue;
-
             // check if the current values of xi_ and _yj are compatible in the same codon
             if (lb - la <= 4 && !rightCodon(la+1,lb-1,xi_,_yj)) continue; //&& (la+1)/3==(lb-1)/3
-
-            temp_e = hairpin_loop(xi,yj,xi_,_yj,l-1);
+            int temp = inf;
+            temp = get<0>(hairpin_special(l, pa, pb, pna, ppb, n_codon_an, n_codon_bp, xi, yj, xi_, _yj, i, j, x, y));
+            if (temp == inf) {
+                temp_e = hairpin_loop(xi,yj,xi_,_yj,l-1);
+            } else {
+                temp_e = temp;
+            }
             if (hairpin_energy > temp_e) {
                 hairpin_energy = temp_e;
             }
@@ -550,29 +720,23 @@ int Zuker::hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int 
 }
 
 
-double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y) {
-    double hairpin_energy = inf;
-    double mfe, cai;
+tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lambda, int l, int a, int b, int pa, int pb, int pna, int ppb, int x1, int y1, int xi, int xi_, int _yj, int yj, int x, int y, int i, int j) {
     string s;
     double temp_mfe, temp_cai;
-    double temp_e;
+    double hairpin_energy = inf, mfe = inf, cai = inf, temp_e = inf;
     static vector<int> temp;
-    int la = sigma(a,i), lb = sigma(b,j);
-    // special case l = 4,5,7
     switch (l) {
-        int xi_, _yj, xi2_, _2yj, xi3_, _3yj;
+        int xi2_, _2yj, xi3_, _3yj;
 
         case 4:
             if (i <= 1) {
-                xi_ = nucleotides[pa][x][i+1];
-                _yj = nucleotides[pb][y][j-1];
                 if (i == 0) {
                     xi2_ = nucleotides[pa][x][2];
                 } else {
                     xi2_ = nucleotides[pb][y][0];
                 }
                 s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_yj],to_char[yj]};
-//
+
                 if (hairpinE.count(s) > 0) {
                     temp_mfe = lambda*hairpinE[s];
                     temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y);
@@ -581,37 +745,29 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
                         hairpin_energy = temp_e;
                         temp = {l,xi_,xi2_,_yj,a,b,x,y};
                         mfe = temp_mfe, cai = temp_cai;
-
                     }
                 }
             } else {
-                for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                    xi_ = nucleotides[pna][x1][0];
-                    xi2_ = nucleotides[pna][x1][1];
-                    _yj = nucleotides[pna][x1][2];
-                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_yj],to_char[yj]};
+                xi2_ = nucleotides[pna][x1][1];
+                s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_yj],to_char[yj]};
 
-                    if (hairpinE.count(s) > 0) {
-                        temp_mfe = lambda*hairpinE[s];
-                        temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
-                        temp_e = temp_mfe + temp_cai;
-                        if (hairpin_energy > temp_e) {
-                            hairpin_energy = temp_e;
-                            temp = {l,xi_,xi2_,_yj,a,b,x,y,a+1,x1};
-                            mfe = temp_mfe, cai = temp_cai;
-                        }
+                if (hairpinE.count(s) > 0) {
+                    temp_mfe = lambda*hairpinE[s];
+                    temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
+                    temp_e = temp_mfe + temp_cai;
+                    if (hairpin_energy > temp_e) {
+                        hairpin_energy = temp_e;
+                        temp = {l,xi_,xi2_,_yj,a,b,x,y,a+1,x1};
+                        mfe = temp_mfe, cai = temp_cai;
                     }
-
                 }
             }
 
             break;
         case 5:
             if (i == 0) {
-                xi_ = nucleotides[pa][x][1];
                 xi2_ = nucleotides[pa][x][2];
                 _2yj = nucleotides[pb][y][0];
-                _yj = nucleotides[pb][y][1];
                 s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
 
                 if (hairpinE.count(s) > 0) {
@@ -627,47 +783,40 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
                 }
 
             } else if (i == 1) {
-                xi_ = nucleotides[pa][x][2];
-
-                for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                    xi2_ = nucleotides[pna][x1][0];
-                    _2yj = nucleotides[pna][x1][1];
-                    _yj = nucleotides[pna][x1][2];
-                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
-                    if (hairpinE.count(s) > 0) {
-                        temp_mfe = lambda*hairpinE[s];
-                        temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
-                        temp_e = temp_mfe + temp_cai;
-                        if (hairpin_energy > temp_e) {
-                            hairpin_energy = temp_e;
-                            temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1};
-                            mfe = temp_mfe, cai = temp_cai;
+                xi2_ = nucleotides[pna][x1][0];
+                _2yj = nucleotides[pna][x1][1];
+                s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
+                if (hairpinE.count(s) > 0) {
+                    temp_mfe = lambda*hairpinE[s];
+                    temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
+                    temp_e = temp_mfe + temp_cai;
+                    if (hairpin_energy > temp_e) {
+                        hairpin_energy = temp_e;
+                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1};
+                        mfe = temp_mfe, cai = temp_cai;
 //
-                        }
                     }
                 }
+
             } else {
-                _yj = nucleotides[pb][y][0];
-                for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                    xi_ = nucleotides[pna][x1][0];
-                    xi2_ = nucleotides[pna][x1][1];
-                    _2yj = nucleotides[pna][x1][2];
-                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
+                xi2_ = nucleotides[pna][x1][1];
+                _2yj = nucleotides[pna][x1][2];
+                s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
 
-                    if (hairpinE.count(s) > 0) {
-                        temp_mfe = lambda*hairpinE[s];
-                        temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
+                if (hairpinE.count(s) > 0) {
+                    temp_mfe = lambda*hairpinE[s];
+                    temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
 
 
-                        temp_e = temp_mfe + temp_cai;
-                        if (hairpin_energy > temp_e) {
-                            hairpin_energy = temp_e;
-                            temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1};
-                            mfe = temp_mfe, cai = temp_cai;
+                    temp_e = temp_mfe + temp_cai;
+                    if (hairpin_energy > temp_e) {
+                        hairpin_energy = temp_e;
+                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1};
+                        mfe = temp_mfe, cai = temp_cai;
 //
-                        }
                     }
                 }
+
             }
 //
             break;
@@ -675,69 +824,63 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
         case 7:
 
             if (i <= 1) {
-                xi_ = nucleotides[pa][x][i+1];
-                _yj = nucleotides[pb][y][j-1];
+
                 if (i == 0) {
                     xi2_ = nucleotides[pa][x][2];
-                    for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                        xi3_ = nucleotides[pna][x1][0];
-                        _3yj = nucleotides[pna][x1][1];
-                        _2yj = nucleotides[pna][x1][2];
-                        s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
+                    xi3_ = nucleotides[pna][x1][0];
+                    _3yj = nucleotides[pna][x1][1];
+                    _2yj = nucleotides[pna][x1][2];
+                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
 
-                        if (hairpinE.count(s) > 0) {
-                            temp_mfe = lambda*hairpinE[s];
-                            temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
-                            temp_e = temp_mfe + temp_cai;
-                            if (hairpin_energy > temp_e) {
-                                hairpin_energy = temp_e;
-                                temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1};
-                                mfe = temp_mfe, cai = temp_cai;
-                            }
+                    if (hairpinE.count(s) > 0) {
+                        temp_mfe = lambda*hairpinE[s];
+                        temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
+                        temp_e = temp_mfe + temp_cai;
+                        if (hairpin_energy > temp_e) {
+                            hairpin_energy = temp_e;
+                            temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1};
+                            mfe = temp_mfe, cai = temp_cai;
                         }
                     }
+
                 } else {
                     _2yj = nucleotides[pb][y][0];
-                    for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                        xi2_ = nucleotides[pna][x1][0];
-                        xi3_ = nucleotides[pna][x1][1];
-                        _3yj = nucleotides[pna][x1][2];
-                        s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
+                    xi2_ = nucleotides[pna][x1][0];
+                    xi3_ = nucleotides[pna][x1][1];
+                    _3yj = nucleotides[pna][x1][2];
+                    s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
 
-                        if (hairpinE.count(s) > 0) {
-                            temp_mfe = lambda*hairpinE[s];
-                            temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
-                            temp_e = temp_mfe + temp_cai;
-                            if (hairpin_energy > temp_e) {
-                                hairpin_energy = temp_e;
-                                temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1};
-                                mfe = temp_mfe, cai = temp_cai;
-                            }
+                    if (hairpinE.count(s) > 0) {
+                        temp_mfe = lambda*hairpinE[s];
+                        temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
+                        temp_e = temp_mfe + temp_cai;
+                        if (hairpin_energy > temp_e) {
+                            hairpin_energy = temp_e;
+                            temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1};
+                            mfe = temp_mfe, cai = temp_cai;
                         }
                     }
+
                 }
             } else {
-                for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                    xi_ = nucleotides[pna][x1][0];
-                    xi2_ = nucleotides[pna][x1][1];
-                    xi3_ = nucleotides[pna][x1][2];
-                    for (int y1 = 0; y1 < n_codon_bp; ++y1) {
-                        _3yj = nucleotides[ppb][y1][0];
-                        _2yj = nucleotides[ppb][y1][1];
-                        _yj = nucleotides[ppb][y1][2];
-                        s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
-                        if (hairpinE.count(s) > 0) {
-                            temp_mfe = lambda*hairpinE[s];
-                            temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1,b-1,y1);
-                            temp_e = temp_mfe + temp_cai;
-                            if (hairpin_energy > temp_e) {
-                                hairpin_energy = temp_e;
-                                temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1,b-1,y1};
-                                mfe = temp_mfe, cai = temp_cai;
-                            }
-                        }
+
+                xi2_ = nucleotides[pna][x1][1];
+                xi3_ = nucleotides[pna][x1][2];
+                _3yj = nucleotides[ppb][y1][0];
+                _2yj = nucleotides[ppb][y1][1];
+                s = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
+                if (hairpinE.count(s) > 0) {
+                    temp_mfe = lambda*hairpinE[s];
+                    temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1,b-1,y1);
+                    temp_e = temp_mfe + temp_cai;
+                    if (hairpin_energy > temp_e) {
+                        hairpin_energy = temp_e;
+                        temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1,b-1,y1};
+                        mfe = temp_mfe, cai = temp_cai;
                     }
                 }
+
+
             }
             break;
         default:
@@ -745,8 +888,21 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
 
     }
 
+    return {hairpin_energy, mfe, cai, temp};
+}
+
+
+double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y) {
+    double hairpin_energy = inf;
+    double mfe, cai;
+    string s;
+    double temp_mfe, temp_cai;
+    double temp_e;
+    static vector<int> temp;
+    int la = sigma(a,i), lb = sigma(b,j);
 
     int xi_, _yj;
+    vector<int> temp_p;
 
     // general case
 
@@ -759,12 +915,19 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
                 if (a+1 == b-1 && x1 != y1) continue;
                 _yj = nucleotides[ppb][y1][2];
                 if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) continue;
-                temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
-                temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a+1,x1,b-1,y1);
-                temp_e = temp_mfe + temp_cai;
+                double temp_he = inf;
+                tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x1, y1, xi, xi_, _yj, yj, x, y, i, j);
+                if (temp_he == inf) {
+                    temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                    temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a+1,x1,b-1,y1);
+                    temp_e = temp_mfe + temp_cai;
+                    temp = {l,xi,xi_,_yj,yj,a+1,x1,b-1,y1,-1};
+                } else {
+                    temp_e = temp_he;
+                }
                 if (hairpin_energy > temp_e) {
                     hairpin_energy = temp_e;
-                    temp = {l,xi,xi_,_yj,yj,a+1,x1,b-1,y1,-1};
+                    temp_p = temp;
                     mfe = temp_mfe, cai = temp_cai;
                 }
 
@@ -778,12 +941,19 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
             if (a+1 == b && x1 != y) continue;
             xi_ = nucleotides[pna][x1][0];
             if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) continue;
-            temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
-            temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a+1,x1);
-            temp_e = temp_mfe + temp_cai;
+            double temp_he = inf;
+            tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x1, y, xi, xi_, _yj, yj, x, y, i, j);
+            if (temp_he == inf) {
+                temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a+1,x1);
+                temp_e = temp_mfe + temp_cai;
+                temp = {l,xi,xi_,_yj,yj,a+1,x1,b,y,-1};
+            } else {
+                temp_e = temp_he;
+            }
             if (hairpin_energy > temp_e) {
                 hairpin_energy = temp_e;
-                temp = {l,xi,xi_,_yj,yj,a+1,x1,b,y,-1};
+                temp_p = temp;
                 mfe = temp_mfe, cai = temp_cai;
             }
         }
@@ -794,12 +964,19 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
             if (a+1 == b && y1 != x) continue;
             _yj = nucleotides[ppb][y1][2];
             if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) continue;
-            temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
-            temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,b-1,y1);
-            temp_e = temp_mfe + temp_cai;
+            double temp_he = inf;
+            tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x, y1, xi, xi_, _yj, yj, x, y, i, j);
+            if (temp_he == inf) {
+                temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,b-1,y1);
+                temp_e = temp_mfe + temp_cai;
+                temp = {l,xi,xi_,_yj,yj,a,x,b-1,y1,-1};
+            } else {
+                temp_e = temp_he;
+            }
             if (hairpin_energy > temp_e) {
                 hairpin_energy = temp_e;
-                temp = {l,xi,xi_,_yj,yj,a,x,b-1,y1,-1};
+                temp_p = temp;
                 mfe = temp_mfe, cai = temp_cai;
             }
         }
@@ -811,12 +988,19 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
         if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) {
 
         } else {
-            temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
-            temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y);
-            temp_e = temp_mfe + temp_cai;
+            double temp_he = inf;
+            tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x, y, xi, xi_, _yj, yj, x, y, i, j);
+            if (temp_he == inf) {
+                temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y);
+                temp_e = temp_mfe + temp_cai;
+                temp = {l,xi,xi_,_yj,yj,a,x,b,y,-1};
+            } else {
+                temp_e = temp_he;
+            }
             if (hairpin_energy > temp_e) {
                 hairpin_energy = temp_e;
-                temp = {l,xi,xi_,_yj,yj,a,x,b,y,-1};
+                temp_p = temp;
                 mfe = temp_mfe, cai = temp_cai;
             }
         }
@@ -2805,167 +2989,27 @@ void Zuker::traceback_B() {
                 break;
             case -1:
                 energy = inf;
-                int uni;
-                uni = 0;
-                if (l + 1 == 5) {
-                    int xi_, _yj, xi2_;
-                    if (i <= 1) {
-                        xi_ = nucleotides[pa][x][i+1];
-                        _yj = nucleotides[pb][y][j-1];
-                        if (i == 0) {
-                            xi2_ = nucleotides[pa][x][2];
-                        } else {
-                            xi2_ = nucleotides[pb][y][0];
-                        }
-                        h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_yj],to_char[yj]};
-                        if (hairpinE.count(h) > 0) {
+                int uni, ty;
 
-                            interior_energy = hairpinE[h];
-                            if (energy > interior_energy) {
-                                energy = interior_energy;
-                                values =  {xi_,xi2_,_yj};
-                            }
-                        }
-                    } else {
-                        for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                            xi_ = nucleotides[pna][x1][0];
-                            xi2_ = nucleotides[pna][x1][1];
-                            _yj = nucleotides[pna][x1][2];
-                            h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_yj],to_char[yj]};
-                            if (hairpinE.count(h) > 0) {
-                                interior_energy = hairpinE[h];
-                                if (energy > interior_energy) {
-                                    energy = interior_energy;
-                                    values =  {xi_,xi2_,_yj};
-                                }
-
-                            }
-                        }
-                    }
-                    goto universal;
-                }
-                else if (l + 1 == 6) {
-                    int xi_, _yj, xi2_, _2yj;
-                    if (i == 0) {
-                        xi_ = nucleotides[pa][x][1];
-                        xi2_ = nucleotides[pa][x][2];
-                        _2yj = nucleotides[pb][y][0];
-                        _yj = nucleotides[pb][y][1];
-                        h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
-
-                        if (hairpinE.count(h) > 0) {
-                            interior_energy = hairpinE[h];
-                            if (energy > interior_energy) {
-                                energy = interior_energy;
-                                values = {xi_,xi2_,_2yj,_yj};
-                            }
-                        }
-                    } else if (i == 1) {
-                        xi_ = nucleotides[pa][x][2];
-                        for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                            xi2_ = nucleotides[pna][x1][0];
-                            _2yj = nucleotides[pna][x1][1];
-                            _yj = nucleotides[pna][x1][2];
-                            h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
-
-                            if (hairpinE.count(h) > 0) {
-                                interior_energy = hairpinE[h] ;
-                                if (energy > interior_energy) {
-                                    energy = interior_energy;
-                                    values = {xi_,xi2_,_2yj,_yj};
-                                }
-                            }
-                        }
-                    } else {
-                        _yj = nucleotides[pb][y][0];
-                        for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                            xi_ = nucleotides[pna][x1][0];
-                            xi2_ = nucleotides[pna][x1][1];
-                            _2yj = nucleotides[pna][x1][2];
-                            h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[_2yj],to_char[_yj],to_char[yj]};
-                            if (hairpinE.count(h) > 0) {
-                                interior_energy = hairpinE[h];
-                                if (energy > interior_energy) {
-                                    energy = interior_energy;
-                                    values = {xi_,xi2_,_2yj,_yj};
-                                }
-                            }
-                        }
-                    }
-
-                    goto universal;
-                }
-                else if (l + 1 == 8) {
-                    int xi_, _yj, xi2_, _2yj, xi3_, _3yj;
-                    if (i <= 1) {
-                        xi_ = nucleotides[pa][x][i+1];
-                        _yj = nucleotides[pb][y][j-1];
-                        if (i == 0) {
-                            xi2_ = nucleotides[pa][x][2];
-                            for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                                xi3_ = nucleotides[pna][x1][0];
-                                _3yj = nucleotides[pna][x1][1];
-                                _2yj = nucleotides[pna][x1][2];
-                                h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
-
-                                if (hairpinE.count(h) > 0) {
-                                    interior_energy = hairpinE[h] ;
-                                    if (energy > interior_energy) {
-                                        energy = interior_energy;
-                                        values = {xi_,xi2_,xi3_,_3yj,_2yj,_yj};
-                                    }
-                                }
-                            }
-                        } else {
-                            _2yj = nucleotides[pb][y][0];
-                            for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                                xi2_ = nucleotides[pna][x1][0];
-                                xi3_ = nucleotides[pna][x1][1];
-                                _3yj = nucleotides[pna][x1][2];
-                                h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
-                                if (hairpinE.count(h) > 0) {
-                                    interior_energy = hairpinE[h];
-                                    if (energy > interior_energy) {
-                                        energy = interior_energy;
-                                        values = {xi_,xi2_,xi3_,_3yj,_2yj,_yj};
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        for (int x1 = 0; x1 < n_codon_an; ++x1) {
-                            xi_ = nucleotides[pna][x1][0];
-                            xi2_ = nucleotides[pna][x1][1];
-                            xi3_ = nucleotides[pna][x1][2];
-                            for (int y1 = 0; y1 < n_codon_bp; ++y1) {
-                                _3yj = nucleotides[ppb][y1][0];
-                                _2yj = nucleotides[ppb][y1][1];
-                                _yj = nucleotides[ppb][y1][2];
-                                h = {to_char[xi],to_char[xi_],to_char[xi2_],to_char[xi3_],to_char[_3yj],to_char[_2yj],to_char[_yj],to_char[yj]};
-
-                                if (hairpinE.count(h) > 0) {
-                                    interior_energy = hairpinE[h];
-                                    if (energy > interior_energy) {
-                                        energy = interior_energy;
-                                        values = {xi_,xi2_,xi3_,_3yj,_2yj,_yj};
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    goto universal;
-                }
-
-            universal:
                 for (int xi_ = 0; xi_ < 4; ++xi_) {
                     if (((1 << xi_) & an_int) == 0) continue;
                     for (int _yj = 0; _yj < 4; ++_yj) {
                         if (((1 << _yj) & bp_int) == 0) continue;
                         if (rj - li <= 4 && (li+1)/3==(rj-1)/3 && !rightCodon(li+1,rj-1,xi_,_yj)) continue;
-                        interior_energy = hairpin_loop(xi,yj,xi_,_yj,l-1) ;
+                        int temp_e = inf;
+                        tie(temp_e, values) = hairpin_special(l, pa, pb, pna, ppb, n_codon_an, n_codon_bp, xi, yj, xi_, _yj, i, j, x, y);
+
+                        if (temp_e == inf) {
+                            interior_energy = hairpin_loop(xi,yj,xi_,_yj,l-1);
+                            ty = 1;
+                        } else {
+                            interior_energy = temp_e;
+                            ty = 0;
+                        }
+
                         if (energy > interior_energy) {
                             energy = interior_energy;
-                            uni = 1;
+                            uni = ty;
                             xi1_ = xi_, _yj1 = _yj;
                         }
                     }
