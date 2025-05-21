@@ -17,6 +17,10 @@ int aa_index (char aa);
 
 int to_int(char a);
 
+vector<string> filterCandidates(
+        const vector<string>& candidates,
+        const unordered_map<int, char>& letter_map);
+
 void char2num(vector<int> &, string &);
 
 int n_index(char n);

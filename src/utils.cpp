@@ -399,6 +399,29 @@ double evaluate_MFE(string & rna) {
 
 }
 
+vector<string> filterCandidates(
+        const vector<string>& candidates,
+        const unordered_map<int, char>& letter_map) {
+
+    vector<string> filtered;
+
+    for (const auto& s : candidates) {
+        bool match = true;
+        for (const auto& [idx, ch] : letter_map) {
+            if (idx >= s.size() || s[idx] != ch) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            filtered.push_back(s);
+        }
+    }
+
+    return filtered;
+}
+
+
 double evaluate_MFE(vector<int> & rna, string & bp) {
     int l = int(rna.size());
     ZukerAlgorithm Zu = ZukerAlgorithm(rna,l);

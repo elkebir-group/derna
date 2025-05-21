@@ -154,7 +154,9 @@ public:
      * */
     void get_rna_cai(string & rna);
 
-    int fill_rna(int i);
+//    int fill_rna(int i);
+
+    int fill_rna(int i, const vector<int>& banned = {});
 
     /**
      * Returns RNA sequence with 'X' at positions where the nucleotides can be replaced
@@ -685,13 +687,12 @@ inline int Zuker::hairpin_loop(int xi, int yj, int xi_, int _yj, int l) {
 
     // add penalty based on size
     hairpin_energy = (l <= 30) ? hairpins[l] : hairpins[30]+(int)(lxc*Log[l]);//hairpinLoops[l]; // log((l)/30.)
-//    cout << "l: " << l << " " << xi << " " <<  _yj << " " << yj << " " << xi_ << endl;
+
     if (l == 3) return hairpin_energy + AU[xi][yj];
 
     // add penalty for a terminal mismatch
     hairpin_energy += mismatchH[type][xi_+1][_yj+1];//T_mm[stack_index(xi, _yj, yj, xi_)];
 
-//    hairpin_energy += add_auterminal(xi, yj,tempf);
     return hairpin_energy;
 }
 

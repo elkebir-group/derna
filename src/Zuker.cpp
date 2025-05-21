@@ -778,7 +778,6 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                         hairpin_energy = temp_e;
                         temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y};
                         mfe = temp_mfe, cai = temp_cai;
-
                     }
                 }
 
@@ -806,8 +805,6 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                 if (hairpinE.count(s) > 0) {
                     temp_mfe = lambda*hairpinE[s];
                     temp_cai = (lambda-1)*add_hairpin_CAI_8(a,b,x,y,a+1,x1);
-
-
                     temp_e = temp_mfe + temp_cai;
                     if (hairpin_energy > temp_e) {
                         hairpin_energy = temp_e;
@@ -1009,11 +1006,12 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
 
     if (E1[index(a,b,i,j,x,y)] > hairpin_energy) {
         E1[index(a,b,i,j,x,y)] = hairpin_energy;
-        E_bt[index(a,b,i,j,x,y)] = temp;
+        E_bt[index(a,b,i,j,x,y)] = temp_p;
         E2[index(a,b,i,j,x,y)] = mfe;
         E_CAI[index(a,b,i,j,x,y)] = cai;
-
     }
+
+
 
     return hairpin_energy;
 }
@@ -3022,6 +3020,50 @@ void Zuker::traceback_B() {
                     } else {
                         nucle_seq[li+1] = xi1_;
                         nucle_seq[rj-1] = _yj1;
+                        if (l == 4 || l == 5 || l == 7) {
+                            unordered_map<int, char> letter_map = {
+                                    {0, to_char[xi]}, {1, to_char[xi1_]}, {l-1, to_char[_yj1]}, {l, to_char[yj]}
+                            };
+                            vector<string> candidates;
+                            int ix = 2;
+
+                            switch (l) {
+                                case 4:
+                                    candidates = filterCandidates(TriloopSeq, letter_map);
+                                    break;
+                                case 5:
+                                    candidates = filterCandidates(TetraloopSeq, letter_map);
+                                    break;
+                                case 7:
+                                    candidates = filterCandidates(HexaloopSeq, letter_map);
+                                    break;
+                                default:
+                                    break;
+                            }
+                            int q;
+
+                            for (int p = li+2; p < rj-1; ++p) {
+                                if (candidates.empty()) break;
+                                if (p != rj-2) {
+                                    q = fill_rna(p);
+                                } else {
+                                    vector<int> chars_at_i;
+                                    for (const auto& s : candidates) {
+                                        if (ix < s.size()) {
+                                            chars_at_i.push_back(to_int(s[ix]));
+                                        }
+                                    }
+                                    q = fill_rna(p, chars_at_i);
+                                }
+
+                                int nucle = nucleotides[protein[p/3]][q][p%3];
+                                nucle_seq[p] = nucle;
+                                letter_map.emplace(ix, to_char[nucle]);
+                                candidates = filterCandidates(candidates, letter_map);
+                                ix += 1;
+
+                            }
+                        }
                         goto OUTLOOP;
                     }
                 }
@@ -3704,6 +3746,53 @@ void Zuker::traceback_B2(double lambda) {
                     energy = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1) + (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a1,x1,b1,y1);
                     nucle_seq[li+1] = xi_;
                     nucle_seq[rj-1] = _yj;
+                    if (l == 4 || l == 5 || l == 7) {
+                        unordered_map<int, char> letter_map = {
+                                {0, to_char[xi]}, {1, to_char[xi_]}, {l-1, to_char[_yj]}, {l, to_char[yj]}
+                        };
+                        vector<string> candidates;
+                        int ix = 2;
+
+                        switch (l) {
+                            case 4:
+                                candidates = filterCandidates(TriloopSeq, letter_map);
+                                break;
+                            case 5:
+                                candidates = filterCandidates(TetraloopSeq, letter_map);
+                                break;
+                            case 7:
+                                candidates = filterCandidates(HexaloopSeq, letter_map);
+                                break;
+                            default:
+                                break;
+                        }
+                        int q;
+
+                            for (int p = li+2; p < rj-1; ++p) {
+                                if (candidates.empty()) break;
+
+                                if (p != rj-2) {
+                                    q = fill_rna(p);
+                                } else {
+                                    vector<int> chars_at_i;
+                                    for (const auto& s : candidates) {
+                                        if (ix < s.size()) {
+                                            chars_at_i.push_back(to_int(s[ix]));
+                                        }
+                                    }
+
+                                    q = fill_rna(p, chars_at_i);
+                                }
+
+                                int nucle = nucleotides[protein[p/3]][q][p%3];
+
+                                nucle_seq[p] = nucle;
+                                letter_map.emplace(ix, to_char[nucle]);
+                                candidates = filterCandidates(candidates, letter_map);
+                                ix += 1;
+
+                            }
+                    }
                     goto OUTLOOP;
                 }
                 break;
@@ -3826,9 +3915,7 @@ void Zuker::assign_codon(vector<int> &s, int sp) {
         vector<int> codon(3);
         int p = protein[sp+i];
         for (int j = 0; j <= 2; j++) {
-
             codon[j] = s[3*i+j];
-
         }
         int x = getxPos(p, codon);
         codon_selection[p] = x;
@@ -5013,29 +5100,40 @@ void Zuker::get_rna_cai(string & rna) {
     }
 }
 
-int Zuker::fill_rna(int index) {
+int Zuker::fill_rna(int index, const vector<int>& banned) {
     int l0, l1, l2;
+
     if (index % 3 == 0) {
         l0 = nucle_seq[index];
-        l1 = nucle_seq[index+1];
-        l2 = nucle_seq[index+2];
+        l1 = nucle_seq[index + 1];
+        l2 = nucle_seq[index + 2];
     } else if (index % 3 == 1) {
-        l0 = nucle_seq[index-1];
+        l0 = nucle_seq[index - 1];
         l1 = nucle_seq[index];
-        l2 = nucle_seq[index+1];
+        l2 = nucle_seq[index + 1];
     } else {
-        l0 = nucle_seq[index-2];
-        l1 = nucle_seq[index-1];
+        l0 = nucle_seq[index - 2];
+        l1 = nucle_seq[index - 1];
         l2 = nucle_seq[index];
     }
-    int pi = protein[index/3];
+
+    int pi = protein[index / 3];
     int n_codon_pi = n_codon[pi];
-    double max_cai = -INF;
+    double max_cai = -inf;
     int idx = 0;
-    // all three nucleotides in codon are specified
-    if (l0 >=0 && l1 >= 0 && l2 >=0) {
+
+    auto is_banned = [&](int p) {
+        return std::find(banned.begin(), banned.end(), p) != banned.end();
+    };
+
+    auto codon_has_banned = [&](int i) {
+        return is_banned(nucleotides[pi][i][0]) || is_banned(nucleotides[pi][i][1]) || is_banned(nucleotides[pi][i][2]);
+    };
+
+    if (l0 >= 0 && l1 >= 0 && l2 >= 0) {
         for (int i = 0; i < n_codon_pi; ++i) {
             if (nucleotides[pi][i][0] == l0 && nucleotides[pi][i][1] == l1 && nucleotides[pi][i][2] == l2) {
+                if (is_banned(nucleotides[pi][i][index%3])) continue;
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
@@ -5043,11 +5141,10 @@ int Zuker::fill_rna(int index) {
             }
         }
         return idx;
-    }
-        // the first two nucleotides in codon are specified
-    else if (l0 >=0 && l1 >= 0) {
+    } else if (l0 >= 0 && l1 >= 0) {
         for (int i = 0; i < n_codon_pi; ++i) {
             if (nucleotides[pi][i][0] == l0 && nucleotides[pi][i][1] == l1) {
+                if (is_banned(nucleotides[pi][i][index%3])) continue;
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
@@ -5055,11 +5152,10 @@ int Zuker::fill_rna(int index) {
             }
         }
         return idx;
-    }
-        // the last two nucleotides in codon are specified
-    else if (l1 >= 0 && l2 >=0) {
+    } else if (l1 >= 0 && l2 >= 0) {
         for (int i = 0; i < n_codon_pi; ++i) {
             if (nucleotides[pi][i][1] == l1 && nucleotides[pi][i][2] == l2) {
+                if (is_banned(nucleotides[pi][i][index%3])) continue;
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
@@ -5067,11 +5163,10 @@ int Zuker::fill_rna(int index) {
             }
         }
         return idx;
-    }
-        // the first and the last nucleotides in codon are specified
-    else if (l0 >= 0 && l2 >=0) {
+    } else if (l0 >= 0 && l2 >= 0) {
         for (int i = 0; i < n_codon_pi; ++i) {
             if (nucleotides[pi][i][0] == l0 && nucleotides[pi][i][2] == l2) {
+                if (is_banned(nucleotides[pi][i][index%3])) continue;
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
@@ -5079,11 +5174,10 @@ int Zuker::fill_rna(int index) {
             }
         }
         return idx;
-    }
-        // only the first nucleotide in codon is specified
-    else if (l0 >=0) {
+    } else if (l0 >= 0) {
         for (int i = 0; i < n_codon_pi; ++i) {
             if (nucleotides[pi][i][0] == l0) {
+                if (is_banned(nucleotides[pi][i][index%3])) continue;
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
@@ -5091,11 +5185,10 @@ int Zuker::fill_rna(int index) {
             }
         }
         return idx;
-    }
-        // only the second nucleotide in codon is specified
-    else if (l1 >=0) {
+    } else if (l1 >= 0) {
         for (int i = 0; i < n_codon_pi; ++i) {
             if (nucleotides[pi][i][1] == l1) {
+                if (is_banned(nucleotides[pi][i][index%3])) continue;
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
@@ -5103,11 +5196,10 @@ int Zuker::fill_rna(int index) {
             }
         }
         return idx;
-    }
-        // only the third nucleotide in codon is specified
-    else if (l2 >=0) {
+    } else if (l2 >= 0) {
         for (int i = 0; i < n_codon_pi; ++i) {
             if (nucleotides[pi][i][2] == l2) {
+                if (is_banned(nucleotides[pi][i][index%3])) continue;
                 if (max_cai < codon_cai[pi][i]) {
                     max_cai = codon_cai[pi][i];
                     idx = i;
@@ -5116,9 +5208,17 @@ int Zuker::fill_rna(int index) {
         }
         return idx;
     } else {
-        return max_cai_pos[pi];
+        for (int i = 0; i < n_codon_pi; ++i) {
+            if (is_banned(nucleotides[pi][i][index%3])) continue;
+            if (max_cai < codon_cai[pi][i]) {
+                max_cai = codon_cai[pi][i];
+                idx = i;
+            }
+        }
+        return idx;
     }
 }
+
 
 void Zuker::assign(vector<int> & target, vector<int> & values, int start) {
     int size = (int)values.size();
