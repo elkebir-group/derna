@@ -243,7 +243,7 @@ int main(int argc, char *argv[]) {
         fout << "zuker cai rna: " << zuker_cai_rna << ".size: " << zuker_cai_rna.size() << endl;
 
         fout << "Codon Adaptation Index: " << CAI_s << endl;
-        fout << "Minimum Free Energy: " << MFE/100 << endl;
+        fout << "Free Energy: " << MFE/100 << endl;
     }
 
     if (zuker && lambda_swipe) {
