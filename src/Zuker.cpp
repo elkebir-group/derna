@@ -4,7 +4,6 @@
 
 #include "Zuker.h"
 #include "utils.h"
-#include <chrono>
 #include <tuple>
 #include <cmath>
 #include <vector>
@@ -14,7 +13,6 @@
 #include "params/constants.h"
 
 using namespace std;
-
 
 
 Zuker::Zuker(int n, int mode, vector<int> & protein):protein(protein),n(n) {
@@ -64,8 +62,6 @@ Zuker::Zuker(int n, int mode, vector<int> & protein):protein(protein),n(n) {
     TM_bt.resize(last_idx);
     codon_selection.resize(n,-1);
     minX = -1, minY = -1;
-
-
     init_values();
 }
 
@@ -92,6 +88,72 @@ void Zuker::init_values() {
             }
         }
     }
+}
+
+// Save all
+void Zuker::save_all_vectors(const string &dir) {
+    save_vector_binary(O, dir + "O.bin");
+    save_vector_binary(E1, dir + "E1.bin");
+    save_vector_binary(M1, dir + "M1.bin");
+    save_vector_binary(TM, dir + "TM.bin");
+
+    save_vector_binary(Z2, dir + "Z2.bin");
+    save_vector_binary(E2, dir + "E2.bin");
+    save_vector_binary(M2, dir + "M2.bin");
+    save_vector_binary(TM2, dir + "TM2.bin");
+
+    save_vector_binary(Z_CAI, dir + "Z_CAI.bin");
+    save_vector_binary(E_CAI, dir + "E_CAI.bin");
+    save_vector_binary(M_CAI, dir + "M_CAI.bin");
+    save_vector_binary(TM_CAI, dir + "TM_CAI.bin");
+
+    save_vector_binary(OB, dir + "OB.bin");
+    save_vector_binary(EB, dir + "EB.bin");
+    save_vector_binary(MB, dir + "MB.bin");
+
+    save_vector_vector_binary(O_bt, dir + "O_bt.bin");
+    save_vector_vector_binary(E_bt, dir + "E_bt.bin");
+    save_vector_vector_binary(M_bt, dir + "M_bt.bin");
+    save_vector_vector_binary(TM_bt, dir + "TM_bt.bin");
+
+    save_vector_binary(codon_selection, dir + "codon_selection.bin");
+
+    ofstream meta(dir + "meta.bin", ios::binary);
+    meta.write(reinterpret_cast<char*>(&minX), sizeof(minX));
+    meta.write(reinterpret_cast<char*>(&minY), sizeof(minY));
+}
+
+// Load all
+void Zuker::load_all_vectors(const string &dir) {
+    load_vector_binary(O, dir + "O.bin");
+    load_vector_binary(E1, dir + "E1.bin");
+    load_vector_binary(M1, dir + "M1.bin");
+    load_vector_binary(TM, dir + "TM.bin");
+
+    load_vector_binary(Z2, dir + "Z2.bin");
+    load_vector_binary(E2, dir + "E2.bin");
+    load_vector_binary(M2, dir + "M2.bin");
+    load_vector_binary(TM2, dir + "TM2.bin");
+
+    load_vector_binary(Z_CAI, dir + "Z_CAI.bin");
+    load_vector_binary(E_CAI, dir + "E_CAI.bin");
+    load_vector_binary(M_CAI, dir + "M_CAI.bin");
+    load_vector_binary(TM_CAI, dir + "TM_CAI.bin");
+
+    load_vector_binary(OB, dir + "OB.bin");
+    load_vector_binary(EB, dir + "EB.bin");
+    load_vector_binary(MB, dir + "MB.bin");
+
+    load_vector_vector_binary(O_bt, dir + "O_bt.bin");
+    load_vector_vector_binary(E_bt, dir + "E_bt.bin");
+    load_vector_vector_binary(M_bt, dir + "M_bt.bin");
+    load_vector_vector_binary(TM_bt, dir + "TM_bt.bin");
+
+    load_vector_binary(codon_selection, dir + "codon_selection.bin");
+
+    ifstream meta(dir + "meta.bin", ios::binary);
+    meta.read(reinterpret_cast<char*>(&minX), sizeof(minX));
+    meta.read(reinterpret_cast<char*>(&minY), sizeof(minY));
 }
 
 int Zuker::calculate_Z(ostream &fout) {
@@ -121,7 +183,7 @@ int Zuker::calculate_Z(ostream &fout) {
         int lb = sigma(b,j);
         if (b == n) continue;
 
-        std::cout << "\rZ -- Completed: " << (((n<<1)-b)*(b-1))/(n*(n-1.)) * 100 << "%" << std::flush;
+        cout << "\rZ -- Completed: " << (((n<<1)-b)*(b-1))/(n*(n-1.)) * 100 << "%" << flush;
         int pb = protein[b];
         const int n_codon_b = n_codon[pb];
 
@@ -256,7 +318,7 @@ void Zuker::calculate_E() {
 
 
     for (int len = 4; len < nuc_len; ++len) {
-        std::cout << "\rE/M -- Completed: " << (len*1.0/nuc_len) * 100 << "%" << std::flush;
+        cout << "\rE/M -- Completed: " << (len*1.0/nuc_len) * 100 << "%" << flush;
 
         int max_a = n - (int)floor(len/3);
         for (int a = 0; a < max_a; ++a) {
@@ -743,7 +805,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                     temp_e = temp_mfe + temp_cai;
                     if (hairpin_energy > temp_e) {
                         hairpin_energy = temp_e;
-                        temp = {l,xi_,xi2_,_yj,a,b,x,y};
+                        temp = {l,xi_,xi2_,_yj,a,b,x,y,-2};
                         mfe = temp_mfe, cai = temp_cai;
                     }
                 }
@@ -757,7 +819,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                     temp_e = temp_mfe + temp_cai;
                     if (hairpin_energy > temp_e) {
                         hairpin_energy = temp_e;
-                        temp = {l,xi_,xi2_,_yj,a,b,x,y,a+1,x1};
+                        temp = {l,xi_,xi2_,_yj,a,b,x,y,a+1,x1,-2};
                         mfe = temp_mfe, cai = temp_cai;
                     }
                 }
@@ -776,7 +838,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                     temp_e = temp_mfe + temp_cai;
                     if (hairpin_energy > temp_e) {
                         hairpin_energy = temp_e;
-                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y};
+                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,-2};
                         mfe = temp_mfe, cai = temp_cai;
                     }
                 }
@@ -791,7 +853,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                     temp_e = temp_mfe + temp_cai;
                     if (hairpin_energy > temp_e) {
                         hairpin_energy = temp_e;
-                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1};
+                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1,-2};
                         mfe = temp_mfe, cai = temp_cai;
 //
                     }
@@ -808,7 +870,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                     temp_e = temp_mfe + temp_cai;
                     if (hairpin_energy > temp_e) {
                         hairpin_energy = temp_e;
-                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1};
+                        temp = {l,xi_,xi2_,_2yj,_yj,a,b,x,y,a+1,x1,-2};
                         mfe = temp_mfe, cai = temp_cai;
 //
                     }
@@ -835,7 +897,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                         temp_e = temp_mfe + temp_cai;
                         if (hairpin_energy > temp_e) {
                             hairpin_energy = temp_e;
-                            temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1};
+                            temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1,-2};
                             mfe = temp_mfe, cai = temp_cai;
                         }
                     }
@@ -853,7 +915,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                         temp_e = temp_mfe + temp_cai;
                         if (hairpin_energy > temp_e) {
                             hairpin_energy = temp_e;
-                            temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1};
+                            temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1,-2};
                             mfe = temp_mfe, cai = temp_cai;
                         }
                     }
@@ -872,7 +934,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
                     temp_e = temp_mfe + temp_cai;
                     if (hairpin_energy > temp_e) {
                         hairpin_energy = temp_e;
-                        temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1,b-1,y1};
+                        temp = {l,xi_,xi2_,xi3_,_3yj,_2yj,_yj,a,b,x,y,a+1,x1,b-1,y1,-2};
                         mfe = temp_mfe, cai = temp_cai;
                     }
                 }
@@ -3909,6 +3971,1148 @@ void Zuker::traceback_B2(double lambda) {
 
 }
 
+tuple<int, double, vector<int>> Zuker::softmax_sample(
+        const vector<tuple<int, double, vector<int>>> &options,
+        double temperature,
+        mt19937 &rng)
+{
+    if (options.empty()) {
+        throw invalid_argument("softmax_sample: options list is empty.");
+    }
+
+    vector<double> logits;
+    logits.reserve(options.size());
+
+    double max_logit = -numeric_limits<double>::infinity();
+    for (const auto &[_, energy, __] : options) {
+        double logit = -energy / temperature;
+        logits.push_back(logit);
+        max_logit = max(max_logit, logit);
+    }
+
+    vector<double> probs;
+    probs.reserve(logits.size());
+    double sum_exp = 0.0;
+    for (double logit : logits) {
+        double p = exp(logit - max_logit);
+        probs.push_back(p);
+        sum_exp += p;
+    }
+
+    for (double &p : probs) {
+        p /= sum_exp;
+    }
+
+    uniform_real_distribution<> dist(0.0, 1.0);
+    double r = dist(rng);
+
+    double cumulative = 0.0;
+    for (size_t i = 0; i < probs.size(); ++i) {
+        cumulative += probs[i];
+        if (r < cumulative) {
+            return options[i];
+        }
+    }
+
+    // Fallback: return last tuple
+    return options.back();
+}
+
+vector<tuple<int, double, vector<int>>> Zuker::build_OB_options(int a, int b, int i, int j, int x, int y, double lambda) {
+    vector<tuple<int, double, vector<int>>> options;
+
+    int pa = protein[a];
+    int pb = protein[b];
+    int li = sigma(a, i);
+    int rj = sigma(b, j);
+    int xi = nucleotides[pa][x][i];
+    int yj = nucleotides[pb][y][j];
+    int idx = index(a, b, i, j, x, y);
+    int ix = -1;
+
+    // Option -1: base pair
+    double energy1 = Access_E1(a, b, i, j, x, y) + lambda * AU[xi][yj];
+    options.emplace_back(-1, energy1, vector<int>{});
+
+    // Option -2: unpair right
+    if (j > 0) {
+        double energy2 = Access_O(a, b, i, j - 1, x, y);
+        options.emplace_back(-2, energy2, vector<int>{});
+    }
+
+    // Option -3: unpair codon on right
+    if (j == 0) {
+        if (a < b - 1) {
+            for (int q = 0; q < n_codon[protein[b - 1]]; ++q) {
+                double energy3 = Access_O(a, b - 1, i, 2, x, q) + (lambda - 1) * codon_cai[pb][y];
+                options.emplace_back(-3, energy3, vector<int>{q});
+            }
+        }
+        if (a == b - 1) {
+            double energy3 = Access_O(a, b - 1, i, 2, x, x) + (lambda - 1) * codon_cai[pb][y];
+            options.emplace_back(-3, energy3, vector<int>{x});
+        }
+
+    }
+
+    // Option -4: bifurcation cases
+    for (int lc = li + 1; lc <= rj - 4; ++lc) {
+        int c = lc / 3;
+        int i1 = lc % 3;
+        int pc = protein[c];
+        int n_codon_c = n_codon[pc];
+
+        for (int hx = 0; hx < n_codon_c; ++hx) {
+            if (c == a && x != hx) continue;
+
+            int hi = nucleotides[pc][hx][i1];
+
+            if (i1 >= 1) {
+                double energy4 = Access_O(a, c, i, i1 - 1, x, hx)
+                                 + Access_E1(c, b, i1, j, hx, y)
+                                 - (lambda - 1) * codon_cai[pc][hx]
+                                 + lambda * AU[hi][yj];
+
+                options.emplace_back(-4, energy4, vector<int>{c, i1 - 1, hx, c, i1, hx, hi});
+            } else {
+                int n_codon_cp = n_codon[protein[c - 1]];
+                for (int ky = 0; ky < n_codon_cp; ++ky) {
+                    if (a == c - 1 && x != ky) continue;
+
+                    double energy4 = Access_O(a, c - 1, i, 2, x, ky)
+                                     + Access_E1(c, b, i1, j, hx, y)
+                                     + lambda * AU[hi][yj];
+
+                    options.emplace_back(-4, energy4, vector<int>{c - 1, 2, ky, c, i1, hx, hi});
+                }
+            }
+        }
+    }
+
+    return options;
+}
+
+vector<tuple<int, double, vector<int>>> Zuker::build_MB_options(int a, int b, int i, int j, int x, int y, double lambda) {
+    vector<tuple<int, double, vector<int>>> options;
+
+    int idx = index(a, b, i, j, x, y);
+    int pa = protein[a];
+    int pb = protein[b];
+    int xi = nucleotides[pa][x][i];
+    int yj = nucleotides[pb][y][j];
+    int ix = -1;
+    int type = BP_pair[xi+1][yj+1];
+
+    if (type > 0) {
+        double energy1 = Access_E1(idx) + lambda*ML_intern + lambda*AU[xi][yj];
+        options.emplace_back(-1, energy1, vector<int>{-1});
+    }
+
+    if (i <= 1) {
+        double energy2 = Access_M1(a, b, i + 1, j, x, y) + lambda * ML_BASE;
+        options.emplace_back(-2, energy2, vector<int>{-2});
+    }
+
+    if (i == 2) {
+        for (int x1 = 0; x1 < n_codon[protein[a+1]]; ++x1) {
+            double energy = Access_M1(a + 1, b, 0, j, x1, y) + (lambda - 1) * codon_cai[pa][x] + lambda * ML_BASE;
+            options.emplace_back(-3, energy, vector<int>{x1, -3});
+        }
+    }
+
+    if (j >= 1) {
+        double energy = Access_M1(a,b,i,j-1,x,y) + lambda*ML_BASE;
+        options.emplace_back(-4, energy, vector<int>{-4});
+    }
+
+    if (j == 0) {
+        for (int y1 = 0; y1 < n_codon[protein[b-1]]; ++y1) {
+            double energy = Access_M1(a,b-1,i,2,x,y1) + (lambda-1)*codon_cai[pb][y] + lambda * ML_BASE;
+            options.emplace_back(-5, energy, vector<int>{y1,-5});
+        }
+    }
+
+    int la = sigma(a,i), lb = sigma(b,j);
+
+    for (int lc = la + 5; lc <= lb-4; lc++) {
+        int c = lc / 3;
+        int i1 = lc % 3;
+        int pc = protein[c];
+        int n_codon_c = n_codon[pc];
+        for (int hx = 0; hx < n_codon_c; ++hx) {
+            if (i1 >= 1) {
+                double energy = Access_M1(a, c, i, i1-1, x, hx) + Access_M1(c, b, i1, j, hx, y) - (lambda-1) * codon_cai[protein[c]][hx];
+                options.emplace_back(-6, energy, vector<int>{c,i1-1,hx,c,i1,hx});
+            } else {
+                int n_codon_cp = n_codon[protein[c-1]];
+                for (int ky = 0; ky < n_codon_cp; ++ky) {
+                    double energy = Access_M1(a, c-1, i, 2, x, ky) + Access_M1(c, b, i1, j, hx, y);
+                    options.emplace_back(-6, energy, vector<int>{c-1,2,ky,c,i1,hx,-6});
+                }
+            }
+        }
+    }
+
+    return options;
+}
+
+vector<tuple<int, double, vector<int>>> Zuker::build_EB_options(int a, int b, int i, int j, int x, int y, double lambda) {
+    vector<tuple<int, double, vector<int>>> options;
+    int idx = index(a, b, i, j, x, y);
+    int pa = protein[a];
+    int pb = protein[b];
+    int xi = nucleotides[pa][x][i];
+    int yj = nucleotides[pb][y][j];
+    int pna = protein[a + 1];
+    int ppb = protein[b - 1];
+    const int n_codon_a = n_codon[pa];
+    const int n_codon_b = n_codon[pb];
+    int n_codon_an = n_codon[pna];
+    const int n_codon_bp = n_codon[ppb];
+    int type = BP_pair[xi+1][yj+1];
+
+    int la = sigma(a,i);
+    int lb = sigma(b,j);
+    int l = lb - la;
+    int xi_, _yj;
+    int ix = -1;
+    double temp_mfe, temp_cai, temp_e;
+    vector<int> temp, temp11;
+
+    if (i == 2 && j == 0) {
+        for (int x1 = 0; x1 < n_codon_an; ++x1) {
+            if (a + 1 == b && x1 != y) continue;
+            xi_ = nucleotides[pna][x1][0];
+            for (int y1 = 0; y1 < n_codon_bp; y1++) {
+                if (a + 1 == b && y1 != x) continue;
+                if (a+1 == b-1 && x1 != y1) continue;
+                _yj = nucleotides[ppb][y1][2];
+                if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) continue;
+                double temp_he = inf;
+                tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x1, y1, xi, xi_, _yj, yj, x, y, i, j);
+                if (temp_he == inf) {
+                    temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                    temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a+1,x1,b-1,y1);
+                    temp_e = temp_mfe + temp_cai;
+                    temp = {l,xi,xi_,_yj,yj,a+1,x1,b-1,y1,-1};
+                    ix = -2;
+                } else {
+                    temp_e = temp_he;
+                    ix = -1;
+                }
+                options.emplace_back(ix, temp_e, temp);
+            }
+        }
+
+    }
+    else if (i == 2) {
+        _yj = nucleotides[pb][y][j-1];
+        for (int x1 = 0; x1 < n_codon_an; ++x1) {
+            if (a+1 == b && x1 != y) continue;
+            xi_ = nucleotides[pna][x1][0];
+            if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) continue;
+            double temp_he = inf;
+            tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x1, y, xi, xi_, _yj, yj, x, y, i, j);
+            if (temp_he == inf) {
+                temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,a+1,x1);
+                temp_e = temp_mfe + temp_cai;
+                temp = {l,xi,xi_,_yj,yj,a+1,x1,b,y,-1};
+                ix = -2;
+            } else {
+                temp_e = temp_he;
+                ix = -1;
+            }
+            options.emplace_back(ix, temp_e, temp);
+        }
+    }
+    else if (j == 0) {
+        xi_ = nucleotides[pa][x][i+1];
+        for (int y1 = 0; y1 < n_codon_bp; y1++) {
+            if (a+1 == b && y1 != x) continue;
+            _yj = nucleotides[ppb][y1][2];
+            if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) continue;
+            double temp_he = inf;
+            tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x, y1, xi, xi_, _yj, yj, x, y, i, j);
+            if (temp_he == inf) {
+                temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y,b-1,y1);
+                temp_e = temp_mfe + temp_cai;
+                temp = {l,xi,xi_,_yj,yj,a,x,b-1,y1,-1};
+                ix = -2;
+            } else {
+                temp_e = temp_he;
+                ix = -1;
+            }
+            options.emplace_back(ix, temp_e, temp);
+        }
+
+    }
+    else {
+        xi_ = nucleotides[pa][x][i+1];
+        _yj = nucleotides[pb][y][j-1];
+        if (lb - la <= 4 && (la+1)/3==(lb-1)/3 && !rightCodon(la+1,lb-1,xi_,_yj)) {
+
+        } else {
+            double temp_he = inf;
+            tie(temp_he, temp_mfe, temp_cai, temp) = hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x, y, xi, xi_, _yj, yj, x, y, i, j);
+            if (temp_he == inf) {
+                temp_mfe = lambda*hairpin_loop(xi,yj,xi_,_yj,l-1);
+                temp_cai = (lambda-1)*add_hairpin_CAI_2(a,b,x,y);
+                temp_e = temp_mfe + temp_cai;
+                temp = {l,xi,xi_,_yj,yj,a,x,b,y,-1};
+                ix = -2;
+            } else {
+                temp_e = temp_he;
+                ix = -1;
+            }
+            options.emplace_back(ix, temp_e, temp);
+        }
+    }
+
+    xi_ = 0, _yj = 0;
+    int cx = 0,cy = 0;
+    if (i <= 1) {
+        xi_ = nucleotides[pa][x][i+1];
+        cx = 1;
+    }
+    if (j >= 1) {
+        _yj = nucleotides[pb][y][j-1];
+        cy = 2;
+    }
+    for (int lc = la + 1; lc <= min(lb-5, la+MAXLOOP+1); lc++) {
+        int ll = lc - la;
+        int c = lc / 3;
+        int i1 = lc % 3;
+        int min_ld = lb - la + lc - MAXLOOP - 2;
+        if (min_ld < lc + 4) min_ld = lc + 4;
+        for (int ld = lb-1; ld >= min_ld; ld--) {
+            int lr = lb - ld;
+            int d = ld / 3;
+            int j1 = ld % 3;
+            int pc = protein[c];
+            int pd = protein[d];
+            const int n_codon_c = n_codon[pc];
+            const int n_codon_d = n_codon[pd];
+            double t_mfe, t_cai;
+
+
+            for (int xh = 0; xh < n_codon_c; ++xh) {
+
+                if (c == a && xh != x) continue;
+                int hi = nucleotides[pc][xh][i1];
+                for (int xk = 0; xk < n_codon_d; ++xk) {
+                    if (d == b && xk != y) continue;
+                    int kj = nucleotides[pd][xk][j1];
+
+                    double interior_energy = inf, en = inf;
+
+                    int type2 = BP_pair[hi+1][kj+1];
+                    if (type2 == 0) continue;
+
+
+                    int _hi = 0, kj_ = 0;
+                    int ch = 0, ck = 0;
+
+                    if (i1 >= 1) {
+                        _hi = nucleotides[pc][xh][i1-1];
+                        ch = 5;
+                    }
+                    if (j1 <= 1) {
+                        kj_ = nucleotides[pd][xk][j1+1];
+                        ck = 9;
+                    }
+
+                    int tt = cx + cy + ch + ck;
+                    int ppc = protein[c-1], pnd = protein[d+1];
+                    pna = protein[a+1], ppb = protein[b-1];
+                    const int safe_n_codon = n;
+
+                    const int n_codon_dn = (pnd >= 0 && pnd < safe_n_codon) ? n_codon[pnd] : 0;
+                    const int n_codon_pc = (ppc >= 0 && ppc < safe_n_codon) ? n_codon[ppc] : 0;
+                    n_codon_an = (pna >= 0 && pna < safe_n_codon) ? n_codon[pna] : 0;
+                    const int n_codon_pb = (ppb >= 0 && ppb < safe_n_codon) ? n_codon[ppb] : 0;
+
+
+                    if (ll == 1 && lr == 1) {
+                        temp_mfe = lambda*stacking(xi,yj,hi,kj);
+                        temp_cai = (lambda-1)*(add_CAI(a,c,x) + add_CAI(b,d,y));
+                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + temp_mfe + temp_cai;
+                        options.emplace_back(-4, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj});
+
+                    }
+                    else if (ll == 1 || lr == 1) {
+                        temp_mfe = lambda*bulge_loop(xi,yj,hi,kj,max(ll,lr)-1);
+                        temp_cai = (lambda-1)*(add_CAI(a,c,x) + add_CAI(b,d,y));
+                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + temp_mfe + temp_cai;
+                        options.emplace_back(-5, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,max(ll,lr)-1});
+                    }
+                    else {
+
+                        switch (tt) {
+                            case 0:
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+                                    for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                        if (a+1 == c && x != hx1) continue;
+                                        if (a+1 == c-1 && x1 != hx1) continue;
+                                        _hi = nucleotides[ppc][hx1][2];
+                                        for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                            if (d+1 == b && y1 != xk) continue;
+                                            _yj = nucleotides[ppb][y1][2];
+                                            for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                                if (d+1 == b && y != ky1) continue;
+                                                if (d+1 == b-1 && y1 != ky1) continue;
+                                                kj_ = nucleotides[pnd][ky1][0];
+                                                t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                                t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1,c-1,hx1) + add_interior_CAI_2(b,d,y,b-1,y1,d+1,ky1));
+                                                temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                                options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c-1,hx1,b-1,y1,d+1,ky1});
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                            case 1:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+
+                                for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                    if (d+1 == b && y1 != xk) continue;
+                                    _yj = nucleotides[ppb][y1][2];
+                                    for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                        if (a+1 == c && x != hx1) continue;
+                                        _hi = nucleotides[ppc][hx1][2];
+                                        for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                            if (d+1 == b && y != ky1) continue;
+                                            if (d+1 == b-1 && y1 != ky1) continue;
+                                            kj_ = nucleotides[pnd][ky1][0];
+                                            t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                            t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,c-1,hx1) + add_interior_CAI_2(b,d,y,b-1,y1,d+1,ky1));
+                                            temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                            options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c-1,hx1,b-1,y1,d+1,ky1});
+
+                                        }
+                                    }
+                                }
+                                break;
+                            case 2:
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                }
+
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+
+                                    for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                        if (a+1 == c && x != hx1) continue;
+                                        if (a+1 == c-1 && x1 != hx1) continue;
+                                        _hi = nucleotides[ppc][hx1][2];
+                                        for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                            if (d+1 == b && y != ky1) continue;
+                                            kj_ = nucleotides[pnd][ky1][0];
+                                            t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                            t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1,c-1,hx1) + add_interior_CAI_2(b,d,y,d+1,ky1));
+                                            temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                            options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c-1,hx1,b,y,d+1,ky1});
+                                        }
+                                    }
+                                }
+                                break;
+                            case 5:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                }
+
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+                                    for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                        if (d+1 == b && y1 != xk) continue;
+                                        _yj = nucleotides[ppb][y1][2];
+                                        for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                            if (d+1 == b && y != ky1) continue;
+                                            if (d+1 == b-1 && y1 != ky1) continue;
+                                            kj_ = nucleotides[pnd][ky1][0];
+                                            t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                            t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1) + add_interior_CAI_2(b,d,y,b-1,y1,d+1,ky1));
+                                            temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                            options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c,xh,b-1,y1,d+1,ky1});
+                                        }
+                                    }
+                                }
+                                break;
+                            case 9:
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+                                    for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                        if (d+1 == b && y1 != xk) continue;
+                                        _yj = nucleotides[ppb][y1][2];
+                                        for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                            if (a+1 == c && x != hx1) continue;
+                                            if (a+1 == c-1 && x1 != hx1) continue;
+                                            _hi = nucleotides[ppc][hx1][2];
+                                            t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                            t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1,c-1,hx1) + add_interior_CAI_2(b,d,y,b-1,y1));
+                                            temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                            options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c-1,hx1,b-1,y1,d,xk});
+                                        }
+                                    }
+                                }
+                                break;
+                            case 3:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                }
+                                for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                    if (a+1 == c && x != hx1) continue;
+                                    _hi = nucleotides[ppc][hx1][2];
+                                    for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                        if (d+1 == b && y != ky1) continue;
+                                        kj_ = nucleotides[pnd][ky1][0];
+                                        t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                        t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,c-1,hx1) + add_interior_CAI_2(b,d,y,d+1,ky1));
+                                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                        options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c-1,hx1,b,y,d+1,ky1});
+                                    }
+                                }
+                                break;
+                            case 6:
+                                if (lc - la <= 4  && !rightCodon(la+1,lc-1,xi_,_hi)) continue; //&& (la+1)/3==(lc-1)/3
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+                                for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                    if (d+1 == b && y1 != xk) continue;
+                                    _yj = nucleotides[ppb][y1][2];
+                                    for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                        if (d+1 == b && y != ky1) continue;
+                                        if (d+1 == b-1 && y1 != ky1) continue;
+                                        kj_ = nucleotides[pnd][ky1][0];
+                                        t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                        t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x) + add_interior_CAI_2(b,d,y,b-1,y1,d+1,ky1));
+                                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                        options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c,xh,b-1,y1,d+1,ky1});
+                                    }
+                                }
+                                break;
+                            case 10:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+                                for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                    if (d+1 == b && y1 != xk) continue;
+                                    _yj = nucleotides[ppb][y1][2];
+                                    for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                        if (a+1 == c && x != hx1) continue;
+                                        _hi = nucleotides[ppc][hx1][2];
+                                        t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                        t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,c-1,hx1) + add_interior_CAI_2(b,d,y,b-1,y1));
+                                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                        options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c-1,hx1,b-1,y1,d,xk});
+
+                                    }
+                                }
+                                break;
+                            case 7:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                }
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                }
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+                                    for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                        if (d+1 == b && y != ky1) continue;
+                                        kj_ = nucleotides[pnd][ky1][0];
+                                        t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                        t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1) + add_interior_CAI_2(b,d,y,d+1,ky1));
+                                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                        options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c,xh,b,y,d+1,ky1});
+                                    }
+                                }
+                                break;
+                            case 11:
+                                if (lb - ld <= 4  && !rightCodon(ld+1,lb-1,kj_,_yj)) continue; //&& (ld+1)/3==(lb-1)/3
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+
+                                    for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                        if (a+1 == c && x != hx1) continue;
+                                        if (a+1 == c-1 && x1 != hx1) continue;
+                                        _hi = nucleotides[ppc][hx1][2];
+                                        t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                        t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1,c-1,hx1) + add_interior_CAI_2(b,d,y));
+                                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                        options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c-1,hx1,b,y,d,xk});
+
+                                    }
+                                }
+                                break;
+                            case 14:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                }
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+
+                                    for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                        if (d+1 == b && y1 != xk) continue;
+                                        _yj = nucleotides[ppb][y1][2];
+                                        t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                        t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1) + add_interior_CAI_2(b,d,y,b-1,y1));
+                                        temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                        options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c,xh,b-1,y1,d,xk});
+
+                                    }
+                                }
+                                break;
+                            case 8:
+                                if (lc - la <= 4  && !rightCodon(la+1,lc-1,xi_,_hi)) continue; //&& (la+1)/3==(lc-1)/3
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                }
+                                for (int ky1 = 0; ky1 < n_codon_dn; ++ky1) {
+                                    if (d+1 == b && y != ky1) continue;
+                                    kj_ = nucleotides[pnd][ky1][0];
+                                    t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                    t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x) + add_interior_CAI_2(b,d,y,d+1,ky1));
+                                    temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                    options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c,xh,b,y,d+1,ky1});
+                                }
+                                break;
+                            case 12:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+                                if (lb - ld <= 4  && !rightCodon(ld+1,lb-1,kj_,_yj)) continue; //&& (ld+1)/3==(lb-1)/3
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+                                for (int hx1 = 0; hx1 < n_codon_pc; ++hx1) {
+                                    if (a+1 == c && x != hx1) continue;
+                                    _hi = nucleotides[ppc][hx1][2];
+                                    t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                    t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,c-1,hx1) + add_interior_CAI_2(b,d,y));
+                                    temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                    options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c-1,hx1,b,y,d,xk});
+                                }
+                                break;
+                            case 15:
+                                if (lc - la <= 4  && !rightCodon(la+1,lc-1,xi_,_hi)) continue; //&& (la+1)/3==(lc-1)/3
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+                                for (int y1 = 0; y1 < n_codon_pb; ++y1) {
+                                    if (d+1 == b && y1 != xk) continue;
+                                    _yj = nucleotides[ppb][y1][2];
+                                    t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                    t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x) + add_interior_CAI_2(b,d,y,b-1,y1));
+                                    temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                    options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c,xh,b-1,y1,d,xk});
+                                }
+                                break;
+                            case 16:
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                }
+                                if (lb - ld <= 4  && !rightCodon(ld+1,lb-1,kj_,_yj)) continue; //&& (ld+1)/3==(lb-1)/3
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+                                for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                                    if (a+1 == c && x1 != xh) continue;
+                                    xi_ = nucleotides[pna][x1][0];
+                                    t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                    t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x,a+1,x1) + add_interior_CAI_2(b,d,y));
+                                    temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                    options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a+1,x1,c,xh,b,y,d,xk});
+                                }
+                                break;
+                            default:
+                                if (lc - la <= 4  && !rightCodon(la+1,lc-1,xi_,_hi)) continue; //&& (la+1)/3==(lc-1)/3
+                                if (lc -1 - la <= 2) {
+                                    // check if the current values of xi and _hi are compatible in the same codon
+                                    if ( !rightCodon(la, lc-1,xi,_hi)) continue;
+                                    // check if the current values of xi_ and hi are compatible in the same codon
+                                    if ( !rightCodon(la+1, lc,xi_,hi)) continue;
+                                }
+                                if (lb - ld <= 4  && !rightCodon(ld+1,lb-1,kj_,_yj)) continue; //&& (ld+1)/3==(lb-1)/3
+                                if (lb -1 - ld <= 2) {
+                                    // check if the current values of kj and _yj are compatible in the same codon
+                                    if (!rightCodon(ld, lb-1,kj,_yj)) continue; //ld/3==(lb-1)/3 &&
+                                    // check if the current values of kj_ and yj are compatible in the same codon
+                                    if ( !rightCodon(ld+1, lb,kj_,yj)) continue; //(ld+1)/3==lb/3 &&
+                                }
+                                t_mfe = lambda*interior_loop(xi,yj,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1);
+                                t_cai = (lambda-1)*(add_interior_CAI_2(a,c,x) + add_interior_CAI_2(b,d,y));
+                                temp_e = Access_E1(c,d,i1,j1,xh,xk) + t_mfe + t_cai;
+                                options.emplace_back(-6, temp_e, vector<int>{c,d,i1,j1,xh,xk,hi,kj,xi_,_yj,_hi,kj_,ll-1,lr-1,a,x,c,xh,b,y,d,xk});
+                                break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (a < b-2 && i == 2 && j == 0) {
+        for (int x1 = 0; x1 < n_codon_an; ++x1) {
+            for (int y1 = 0; y1 < n_codon_bp; ++y1) {
+                temp_e =  TM[index(a+1,b-1,0,2,x1,y1)] + (lambda-1)*(codon_cai[pa][x] + codon_cai[pb][y])
+                                                         + lambda*(AU[nucleotides[pa][x][i]][nucleotides[pb][y][j]] + ML_closing + ML_intern); //idx_t + 6*x1 + y1
+                options.emplace_back(-3, temp_e, vector<int>{a+1,b-1,0,2,x1,y1});
+            }
+        }
+    }
+
+    if (a < b-1) {
+        if (i == 2 && j >= 1) {
+            for (int x1 = 0; x1 < n_codon_an; ++x1) {
+                temp_e = TM[index(a+1,b,0,j-1,x1,y)] + (lambda-1)*codon_cai[pa][x]
+                                                       + lambda*(AU[nucleotides[pa][x][i]][nucleotides[pb][y][j]] + ML_closing + ML_intern); //idx_t + 6*x1
+                options.emplace_back(-3, temp_e, vector<int>{a+1,b,0,j-1,x1,y});
+            }
+        }
+        if (i <= 1 && j == 0) {
+            for (int y1 = 0; y1 < n_codon_bp; ++y1) {
+                temp_e = TM[index(a,b-1,i+1,2,x,y1)] + (lambda-1)*codon_cai[pb][y]
+                        + lambda*(AU[nucleotides[pa][x][i]][nucleotides[pb][y][j]] + ML_closing + ML_intern); //idx_t + y1
+                options.emplace_back(-3, temp_e, vector<int>{a,b-1,i+1,2,x,y1});
+            }
+        }
+    }
+
+    if (a < b && i <= 1 && j >= 1) {
+        temp_e = TM[index(a,b,i+1,j-1,x,y)]
+                 + lambda*(AU[nucleotides[pa][x][i]][nucleotides[pb][y][j]] + ML_closing + ML_intern);
+        options.emplace_back(-3, temp_e, vector<int>{a,b,i+1,j-1,x,y});
+    }
+
+    return options;
+}
+
+void Zuker::traceback_suboptimal(double lambda, double temperature, mt19937 &rng) {
+    nucle_seq.clear(), sector.clear(), bp_bond.clear(), codon_selection.clear();
+    sector.resize(3*n);
+    bp_bond.resize(3*n);
+    nucle_seq.resize(3*n,-1);
+    codon_selection.resize(n,-1);
+    int s = 0, t = 0;
+    sector[++s] = {0, n - 1, 0, 2, minX, minY, 0};
+    codon_selection[0] = minX;
+    codon_selection[n - 1] = minY;
+    int c,d,i1,j1,hx,ky;
+
+    OUTLOOP:
+    while (s > 0) {
+        int a = sector[s].a;
+        int b = sector[s].b;
+        int i = sector[s].i;
+        int j = sector[s].j;
+        int x = sector[s].x;
+        int y = sector[s].y;
+        int ml = sector[s--].ml;
+
+        int pa = protein[a];
+        int pb = protein[b];
+        int li = sigma(a, i);
+        int rj = sigma(b, j);
+        int xi = nucleotides[pa][x][i];
+        int yj = nucleotides[pb][y][j];
+        int idx = index(a, b, i, j, x, y);
+
+        if (a == b && i == j) break;
+
+        nucle_seq[li] = xi;
+        nucle_seq[rj] = yj;
+        codon_selection[a] = x;
+        codon_selection[b] = y;
+
+//        cout << "0 protein idx: " << a << ", protein: " << pa << ", codon: " << x << endl;
+//        cout << "1 protein idx: " << b << ", protein: " << pb << ", codon: " << y << endl;
+
+        vector<int> bt_data;
+
+        int bt;
+        double en;
+
+        if (ml == 0) {
+            auto options = build_OB_options(a, b, i, j, x, y, lambda);
+            tie(bt, en, bt_data) = softmax_sample(options, temperature, rng);
+//            cout << "ml: " << ml << " " << a << " " << b << " " << i << " " << j << " " << x << " " << y << " " << en << " " << bt << endl;
+            switch (bt) {
+                case -1:
+                    bp_bond[++t] = {sigma(a, i), sigma(b, j)};
+                    goto repeat;
+                    break;
+                case -2:
+                    sector[++s] = {a, b, i, j - 1, x, y, ml};
+                    goto OUTLOOP;
+                    break;
+                case -3: {
+                    int kj = bt_data[0];
+                    sector[++s] = {a, b - 1, i, 2, x, kj, ml};
+                    goto OUTLOOP;
+                    break;
+                }
+                case -4: {
+                    int al = bt_data[0], il = bt_data[1], xl = bt_data[2];
+                    int br = bt_data[3], jr = bt_data[4], yr = bt_data[5];
+                    sector[++s] = {a, al, i, il, x, xl, 0};
+                    a = br;
+                    i = jr;
+                    x = yr;
+                    bp_bond[++t] = {sigma(a, i), sigma(b, j)};
+                    goto repeat; break;
+                }
+                default:
+                    cerr << "Unexpected OB backtrace code: " << bt << endl;
+                    exit(1);
+            }
+        }
+        else if (ml == 1) {
+            auto options = build_MB_options(a, b, i, j, x, y, lambda);
+            tie(bt, en, bt_data) = softmax_sample(options, temperature, rng);
+//            cout << "ml: " << ml << " " << a << " " << b << " " << i << " " << j << " " << x << " " << y << " " << en << " " << bt << endl;
+            switch (bt) {
+                case -1:
+                    bp_bond[++t] = {sigma(a, i), sigma(b, j)};
+                    goto repeat; break;
+                case -2:
+                    sector[++s] = {a, b, i + 1, j, x, y, ml};
+                    goto OUTLOOP;
+                    break;
+                case -3: {
+                    int hi = bt_data[0];
+                    sector[++s] = {a + 1, b, 0, j, hi, y, ml};
+                    goto OUTLOOP;
+                    break;
+                }
+                case -4:
+                    sector[++s] = {a, b, i, j - 1, x, y, ml};
+                    goto OUTLOOP;
+                    break;
+                case -5: {
+                    int kj = bt_data[0];
+                    sector[++s] = {a, b - 1, i, 2, x, kj, ml};
+                    goto OUTLOOP;
+                    break;
+                }
+                case -6: {
+                    c = bt_data[0], i1 = bt_data[1];
+                    int hi = bt_data[2], c1 = bt_data[3], i1_ = bt_data[4], kj = bt_data[5];
+                    sector[++s] = {a, c, i, i1, x, hi, ml};
+                    sector[++s] = {c1, b, i1_, j, kj, y, ml};
+                    goto OUTLOOP;
+                    break;
+                }
+                default:
+                    cerr << "Unexpected MB backtrace code: " << bt << endl;
+                    exit(1);
+            }
+        }
+        repeat:
+        {
+            rj = sigma(b,j);
+            li = sigma(a,i);
+            pa = protein[a];
+            pb = protein[b];
+            xi = nucleotides[pa][x][i];
+            yj = nucleotides[pb][y][j];
+
+            if (a > b || (a == b && i >= j)) {
+                break;
+            }
+
+            nucle_seq[li] = xi;
+            nucle_seq[rj] = yj;
+            codon_selection[a] = x;
+            codon_selection[b] = y;
+
+//            cout << "2 protein idx: " << a << ", protein: " << pa <<  ", codon: " << x << endl;
+//            cout << "3 protein idx: " << b << ", protein: " << pb << ", codon: " << y << endl;
+
+            auto options = build_EB_options(a, b, i, j, x, y, lambda);
+            if (!options.empty()) {
+                tie(bt, en, bt_data) = softmax_sample(options, temperature, rng);
+//                cout << "repeat: " << a << " " << b << " " << i << " " << j << " " << x << " " << y << " " << en << " " << bt << endl;
+                string str;
+                vector<int> nuc;
+//                cout << "3 bt: " << bt << endl;
+                switch (bt) {
+                    int hi, kj, lc, ld, ll; //pc, pd, n_codon_c, n_codon_d, min_ld
+                    int c1, i1_; //,d1, j1_
+                    int xi_, _yj; // cx, cy
+                    double energy; //interior_energy, internal_energy
+                    int l,a1,b1,x1,y1,a2,x2,b2,y2;
+                    char xi1, xi2,xi3,yj3,yj2,yj1;
+
+                    case -1: {
+                        // Hairpin: nothing to add; base pair already added
+                        l = bt_data[0];
+                        for (int pos = 1; pos < l; ++pos) {
+                            switch (pos) {
+                                case 1:
+                                    xi1 = to_char[bt_data[pos]];
+                                    break;
+                                case 2:
+                                    xi2 = to_char[bt_data[pos]];
+                                    break;
+                                case 3:
+                                    xi3 = to_char[bt_data[pos]];
+                                    break;
+                                case 4:
+                                    yj3 = to_char[bt_data[pos]];
+                                    break;
+                                case 5:
+                                    yj2 = to_char[bt_data[pos]];
+                                    break;
+                                case 6:
+                                    yj1 = to_char[bt_data[pos]];
+                                    break;
+                                default:
+                                    break;
+                            }
+                        }
+                        for (int pos = l; pos < (int)bt_data.size(); ++pos) {
+                            switch (pos-l) {
+                                case 0:
+                                    a1 = bt_data[pos];
+                                    break;
+                                case 1:
+                                    b1 = bt_data[pos];
+                                    break;
+                                case 2:
+                                    x1 = bt_data[pos];
+                                    break;
+                                case 3:
+                                    y1 = bt_data[pos];
+                                    break;
+                                case 4:
+                                    a2 = bt_data[pos];
+                                    break;
+                                case 5:
+                                    x2 = bt_data[pos];
+                                    break;
+                                case 6:
+                                    b2 = bt_data[pos];
+                                    break;
+                                case 7:
+                                    y2 = bt_data[pos];
+                                    break;
+                                default:
+                                    break;
+                            }
+                        }
+                        switch (l) {
+                            case 4:
+                                nuc = {to_int(xi1), to_int(xi2),to_int(xi3)};
+                                str = {to_char[xi],xi1,xi2,xi3,to_char[yj]};
+                                break;
+                            case 5:
+                                nuc = {to_int(xi1),to_int(xi2),to_int(xi3),to_int(yj3)};
+                                str = {to_char[xi],xi1,xi2,xi3,yj3,to_char[yj]};
+                                break;
+                            case 7:
+                                nuc = {to_int(xi1),to_int(xi2),to_int(xi3),to_int(yj3),to_int(yj2),to_int(yj1)};
+                                str = {to_char[xi],xi1,xi2,xi3,yj3,yj2,yj1,to_char[yj]};
+                                break;
+                            default:
+                                cerr << "Unexpected length: " << l << endl;
+                                exit(4);
+                                break;
+                        }
+                        switch (bt_data.size() - l) {
+                            case 4:
+//                                cai = (lambda - 1) * add_hairpin_CAI_8(a1,b1,x1,y1);
+                                break;
+                            case 6:
+                                codon_selection[a2] = x2;
+//                                cout << "4 protein idx: " << a2 << ", protein: " << protein[a2] << ", codon: " << x2 << endl;
+                                break;
+                            case 8:
+                                codon_selection[a2] = x2;
+                                codon_selection[b2] = y2;
+//                                cout << "5 protein idx: " << a2 << ", protein: " << protein[a2] << ", codon: " << x2 << endl;
+//                                cout << "6 protein idx: " << b2 << ", protein: " << protein[y2] << ", codon: " << y2 << endl;
+                                break;
+                            default:
+                                cout << bt_data.size() - l - 1 << endl;
+                                exit(6);
+                                break;
+                        }
+                        assign(nucle_seq,nuc,li+1);
+                        goto OUTLOOP;
+                        break;
+                    }
+                    case -2:
+                        l = bt_data[0], xi_ = bt_data[2], _yj = bt_data[3], a1 = bt_data[5], x1 = bt_data[6] , b1 = bt_data[7], y1 = bt_data[8];
+
+                        nucle_seq[li+1] = xi_;
+                        nucle_seq[rj-1] = _yj;
+//                        cout << 1 << " " << "li: " << li+1 << " " <<  to_char[xi_] << ", rj: " << rj-1 << " " << to_char[_yj] << endl;
+                        goto OUTLOOP;
+                        break;
+                    case -3:
+                        ml = 1;
+                        int t_idx;
+                        int sa,sb,si,sj,sx,sy,sh,sk;
+
+                        sa = bt_data[0], sb = bt_data[1], si = bt_data[2], sj = bt_data[3], sx = bt_data[4], sy = bt_data[5];
+
+//                        c = bt_data[0], i1 = bt_data[1], sh = bt_data[2], c1 = bt_data[3], i1_ = bt_data[4], sk = bt_data[5];
+                        t_idx = index(sa,sb,si,sj,sx,sy);
+
+                        c = TM_bt[t_idx][0], i1 =TM_bt[t_idx][1], sh = TM_bt[t_idx][2], c1 = TM_bt[t_idx][3], i1_ = TM_bt[t_idx][4], sk = TM_bt[t_idx][5];
+
+                        sector[++s] = {sa, c, si, i1, sx, sh, ml};
+                        sector[++s] = {c1, sb, i1_, sj, sk, sy, ml};
+                        break;
+
+                    case -4:
+                        c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3], hx = bt_data[4], ky = bt_data[5], hi = bt_data[6], kj = bt_data[7];
+//                        energy = Access_E1(c, d, i1, j1, hx, ky) + lambda * stacking(xi, yj, hi, kj) + (lambda-1)*(add_CAI(a,c,x) + add_CAI(b,d,y));
+                        lc = sigma(c,i1), ld = sigma(d,j1);
+
+                        bp_bond[++t].i = lc;
+                        bp_bond[t].j = ld;
+
+                        nucle_seq[lc] = hi;
+                        nucle_seq[ld] = kj;
+//                        cout << 2 << " " << "li: " << lc << " " <<  to_char[hi] << ", rj: " << ld << " " << to_char[kj] << endl;
+                        a = c, b = d, i = i1, j = j1, x = hx, y = ky;
+
+//                        cout << "0 pa: " << a << ", pb: " << b << ", x: " << hx << ", y: " << ky << ", la: " << lc << ", lb: " << ld << ", lc: " << endl;
+
+                        goto repeat;
+                        break;
+                    case -5: {
+                        c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3], hx = bt_data[4], ky = bt_data[5], hi = bt_data[6], kj = bt_data[7], ll = bt_data[8];
+//                        energy = Access_E1(c, d, i1, j1, hx, ky) + lambda * bulge_loop(xi, yj, hi, kj, ll)  + (lambda-1)*(add_CAI(a,c,x) + add_CAI(b,d,y));
+                        lc = sigma(c,i1), ld = sigma(d,j1);
+
+                        bp_bond[++t].i = lc;
+                        bp_bond[t].j = ld;
+
+                        nucle_seq[lc] = hi;
+                        nucle_seq[ld] = kj;
+//                        cout << 3 << " " << "li: " << lc << " " <<  to_char[hi] << ", rj: " << ld << " " << to_char[kj] << endl;
+
+                        a = c, b = d, i = i1, j = j1, x = hx, y = ky;
+//                        cout << "1 pa: " << a << ", pb: " << b << ", x: " << hx << ", y: " << ky << endl;
+                        goto repeat;
+//                }
+                        break;
+                    }
+
+                    case -6: {
+                        int _hi, kj_, lr;
+                        int na,xa,cp,xc,bp,xb,nd,xd;
+
+                        c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3], hx = bt_data[4], ky = bt_data[5], hi = bt_data[6], kj = bt_data[7];
+                        xi_ = bt_data[8], _yj = bt_data[9], _hi = bt_data[10], kj_ = bt_data[11],  ll = bt_data[12], lr = bt_data[13];
+                        na = bt_data[14], xa = bt_data[15], cp = bt_data[16], xc = bt_data[17], bp = bt_data[18], xb = bt_data[19], nd = bt_data[20], xd = bt_data[21];
+
+                        lc = sigma(c,i1), ld = sigma(d,j1);
+
+//                        energy = Access_E1(c, d, i1, j1, hx, ky) + lambda* interior_loop(xi, yj, hi, kj, xi_, _yj, _hi, kj_,ll, lr)
+//                                 + (lambda-1)*(add_interior_CAI_2(a,c,x,na,xa,cp,xc) + add_interior_CAI_2(b,d,y,bp,xb,nd,xd));
+
+                        bp_bond[++t].i = lc;
+                        bp_bond[t].j = ld;
+
+                        nucle_seq[lc] = hi;
+                        nucle_seq[ld] = kj;
+//                        cout << 4 << " " << "li: " << lc << " " <<  to_char[hi] << ", rj: " << ld << " " << to_char[kj] << endl;
+
+                        nucle_seq[li + 1] = xi_;
+                        nucle_seq[rj - 1] = _yj;
+                        nucle_seq[lc - 1] = _hi;
+                        nucle_seq[ld + 1] = kj_;
+
+                        a = c, b = d, i = i1, j = j1, x = hx, y = ky;
+//                        cout << "2 pa: " << a << ", pb: " << b << ", x: " << hx << ", y: " << ky << ", tt: " << tt << endl;
+                        goto repeat;
+                        break;
+                    }
+                    default:
+                        cerr << "Unexpected EB backtrace code: " << bt << endl;
+                        exit(1);
+                }
+            }
+        }
+
+    }
+
+    bp_bond[0].i = t;
+}
+
 void Zuker::assign_codon(vector<int> &s, int sp) {
     int m = (int)s.size()/3;
     for (int i = 0; i < m; ++i) {
@@ -4140,7 +5344,7 @@ void Zuker::calculate_CAI_E(double lambda) {
 
     int nuc_len = 3*n;
     for (int len = 4; len < nuc_len; ++len) {
-        std::cout << "\rE/M -- Completed: " << (len*1.0/nuc_len) * 100 << "%" << std::flush;
+        cout << "\rE/M -- Completed: " << (len*1.0/nuc_len) * 100 << "%" << flush;
         int max_a = n - (int)floor(len/3);
         for (int a = 0, b; a < max_a; ++a) {
             for (int i = 0; i < 3; ++i) {
@@ -4496,19 +5700,21 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
     double right_lambda;
     vector<double> O_buffer,lambda_buffer,F_buffer,CAI_buffer,stand_CAI;
     vector<double> MFE_buffer, C_buffer;
-    vector<pair<string, vector<double>>> dataset(7);
+    vector<double> F_buffer_sub,CAI_buffer_sub,stand_CAI_sub;
+    vector<pair<string, vector<double>>> dataset(10);
     queue<pair<double, double>> lambda;
     unordered_map<double, double> mfe_map;
     unordered_map<double, double> cai_map;
     double left_CAI = 0, left_cai = 0, left_mfe = 0, right_CAI = inf, right_cai = inf, right_mfe = inf;
 
-    lambda.push({EPSILON,1-EPSILON});
+    lambda.emplace(EPSILON,1-EPSILON);
     int idx;
 
     while (!lambda.empty()) {
         left_lambda=  lambda.front().first, right_lambda = lambda.front().second;
         lambda.pop();
         string left_rna(3*n, '.'), left_bp(3*n, '.'), right_rna(3*n, '.'), right_bp(3*n, '.');
+        string left_rna_sub(3*n, '.'), left_bp_sub(3*n, '.'), right_rna_sub(3*n, '.'), right_bp_sub(3*n, '.');
         if (mfe_map.count(left_lambda) != 0) {
             left_cai = cai_map[left_lambda];
             left_mfe = mfe_map[left_lambda];
@@ -4537,6 +5743,31 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
             cout << "lambda: " << left_lambda << ",O: " << left_O << ",cai: " << Z_CAI[idx] / (left_lambda-1) << ",mfe: " << Z2[idx] / left_lambda << ",integrated: " << Z2[idx] + Z_CAI[idx] << endl;
             cout << "lambda: " << left_lambda << ",O: " << left_O << ",cai: " << left_CAI << ",sCAI: " << left_cai << ",mfe: " << left_mfe << ",combined: " << left_lambda*left_mfe+(left_lambda-1)*left_CAI << endl;
 
+            try {
+                cout << "subopt: " << endl;
+                mt19937 rng(42);
+
+                traceback_suboptimal(left_lambda, 0.5, rng);
+                get_rna_cai(left_rna_sub);
+                get_bp(left_bp_sub);
+//  left_CAI = evaluate_CAI(left_rna_sub, protein, 1);
+                left_cai = evaluate_CAI(left_rna_sub);
+                left_mfe = evaluate_MFE(left_rna_sub);
+
+                F_buffer_sub.push_back(left_mfe);
+                CAI_buffer_sub.push_back(left_CAI);
+                stand_CAI_sub.push_back(left_cai);
+            } catch (const exception& e) {
+                F_buffer_sub.push_back(0.0);
+                CAI_buffer_sub.push_back(0.0);
+                stand_CAI_sub.push_back(0.0);
+                cerr << "Error during suboptimal traceback: " << e.what() << endl;
+            }
+
+            fout << "rna: " << left_rna_sub << endl;
+            fout << "bp: " << left_bp_sub << endl;
+            cout << "lambda: " << left_lambda << ",O: " << left_O << ",cai: " << Z_CAI[idx] / (left_lambda-1) << ",mfe: " << Z2[idx] / left_lambda << ",integrated: " << Z2[idx] + Z_CAI[idx] << endl;
+            cout << "lambda: " << left_lambda << ",O: " << left_O << ",cai: " << left_CAI << ",sCAI: " << left_cai << ",mfe: " << left_mfe << ",combined: " << left_lambda*left_mfe+(left_lambda-1)*left_CAI << endl;
         }
 
         if (mfe_map.count(right_lambda) != 0) {
@@ -4567,20 +5798,48 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
             cout << "lambda: " << right_lambda << ",O: " << right_O << ",cai: " << Z_CAI[idx] / (right_lambda-1) << ",mfe: " << Z2[idx] / right_lambda << ",integrated: " << Z2[idx] + Z_CAI[idx] << endl;
             cout << "lambda: " << right_lambda << ",O: " << right_O << ",cai: " << right_CAI << ",sCAI: " << right_cai << ",mfe: " << right_mfe << ",combined: " << right_lambda*right_mfe+(right_lambda-1)*right_CAI << endl;
 
+            try {
+                cout << "subopt: " << endl;
+                mt19937 rng(42);
+                traceback_suboptimal(left_lambda, 0.5, rng);
+//            cout << "traceback" << endl;
+                get_rna_cai(right_rna_sub);
+//            cout << "filling rna" << endl;
+                get_bp(right_bp_sub);
+//            cout << "filling bp" << endl;
+//            right_CAI = evaluate_CAI(right_rna_sub, protein, 1);
+                right_cai = evaluate_CAI(right_rna_sub);
+                right_mfe = evaluate_MFE(right_rna_sub);
+
+                F_buffer_sub.push_back(right_mfe);
+                CAI_buffer_sub.push_back(right_CAI);
+                stand_CAI_sub.push_back(right_cai);
+            } catch (const exception& e) {
+                F_buffer_sub.push_back(0.0);
+                CAI_buffer_sub.push_back(0.0);
+                stand_CAI_sub.push_back(0.0);
+                cerr << "Error during suboptimal traceback: " << e.what() << endl;
+            }
+
+            fout << "rna: " << right_rna << endl;
+            fout << "bp: " << right_bp << endl;
+            cout << "lambda: " << right_lambda << ",O: " << right_O << ",cai: " << Z_CAI[idx] / (right_lambda-1) << ",mfe: " << Z2[idx] / right_lambda << ",integrated: " << Z2[idx] + Z_CAI[idx] << endl;
+            cout << "lambda: " << right_lambda << ",O: " << right_O << ",cai: " << right_CAI << ",sCAI: " << right_cai << ",mfe: " << right_mfe << ",combined: " << right_lambda*right_mfe+(right_lambda-1)*right_CAI << endl;
+
         }
         if (!compare(left_cai, right_cai) && !compare(left_mfe, right_mfe)) {
             cout << "lamda diff: " << right_lambda-left_lambda << endl;
             if (right_lambda < threshold) {
                 if (!compare(left_lambda,right_lambda,threshold2)) {
                     double m = (left_lambda + right_lambda) / 2;
-                    lambda.push({left_lambda, m});
-                    lambda.push({m, right_lambda});
+                    lambda.emplace(left_lambda, m);
+                    lambda.emplace(m, right_lambda);
                 }
             } else {
                 if (!compare(left_lambda,right_lambda,threshold)) {
                     double m = (left_lambda + right_lambda) / 2;
-                    lambda.push({left_lambda, m});
-                    lambda.push({m, right_lambda});
+                    lambda.emplace(left_lambda, m);
+                    lambda.emplace(m, right_lambda);
                 }
             }
 
@@ -4595,6 +5854,9 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
     dataset[4] = make_pair('O', O_buffer);
     dataset[5] = make_pair("mfe", MFE_buffer);
     dataset[6] = make_pair("CAI", C_buffer);
+    dataset[7] = make_pair("sub_mfe", F_buffer_sub);
+    dataset[8] = make_pair("sub_CAI", CAI_buffer_sub);
+    dataset[9] = make_pair("sub_sCAI", stand_CAI_sub);
     write_csv(outfile + ".csv", dataset);
     cout << "swipe done" << endl;
 }
@@ -4611,7 +5873,7 @@ void Zuker::lambda_swipe_3(double threshold, double threshold2, ostream &fout, s
     unordered_map<double, double> cai_map;
     double left_CAI = 0, left_cai = 0, left_mfe = 0, right_CAI = inf, right_cai = inf, right_mfe = inf;
 
-    lambda.push({EPSILON,1-EPSILON});
+    lambda.emplace(EPSILON,1-EPSILON);
     int idx;
 
     while (!lambda.empty()) {
@@ -4682,14 +5944,14 @@ void Zuker::lambda_swipe_3(double threshold, double threshold2, ostream &fout, s
             if (right_lambda < threshold) {
                 if (!compare(left_lambda,right_lambda,threshold2)) {
                     double m = left_lambda * 0.4 + right_lambda * 0.6;
-                    lambda.push({left_lambda, m});
-                    lambda.push({m, right_lambda});
+                    lambda.emplace(left_lambda, m);
+                    lambda.emplace(m, right_lambda);
                 }
             } else {
                 if (!compare(left_lambda,right_lambda,threshold)) {
                     double m = left_lambda * 0.4 + right_lambda * 0.6;
-                    lambda.push({left_lambda, m});
-                    lambda.push({m, right_lambda});
+                    lambda.emplace(left_lambda, m);
+                    lambda.emplace(m, right_lambda);
                 }
             }
 
@@ -5018,6 +6280,7 @@ void Zuker::get_rna_cai(string & rna) {
     int i = 0;
     while (i < 3*n) {
         if (nucle_seq[i] == -1) {
+//            if (i == 58) cout << "i: " << i << endl;
             if (i % 3 == 0) {
                 if (nucle_seq[i+1] == -1 && nucle_seq[i+2] == -1) {
                     int p = protein[i/3];
@@ -5031,7 +6294,6 @@ void Zuker::get_rna_cai(string & rna) {
                     i = i+3;
                 }
                 else if (nucle_seq[i+1] == -1) {
-
                     int idx = codon_selection[i/3];
                     if (idx == -1)
                         idx = fill_rna(i);
@@ -5064,17 +6326,15 @@ void Zuker::get_rna_cai(string & rna) {
             }
             if (i % 3 == 1) {
                 if (nucle_seq[i+1] == -1) {
-
                     int idx = codon_selection[i/3];
                     if (idx == -1)
                         idx = fill_rna(i);
                     rna[i] = to_char[nucleotides[protein[i/3]][idx][1]];
                     rna[i+1] = to_char[nucleotides[protein[i/3]][idx][2]];
-
-
                     i = i+2;
                 } else {
                     int idx = codon_selection[i/3];
+//                    if (i == 58) cout << "protein idx: " << i/3 << ", protein: " << protein[i/3] << ", codon: " << idx << endl;
                     if (idx == -1)
                         idx = fill_rna(i);
                     rna[i+1] = to_char[nucle_seq[i+1]];
@@ -5123,11 +6383,7 @@ int Zuker::fill_rna(int index, const vector<int>& banned) {
     int idx = 0;
 
     auto is_banned = [&](int p) {
-        return std::find(banned.begin(), banned.end(), p) != banned.end();
-    };
-
-    auto codon_has_banned = [&](int i) {
-        return is_banned(nucleotides[pi][i][0]) || is_banned(nucleotides[pi][i][1]) || is_banned(nucleotides[pi][i][2]);
+        return find(banned.begin(), banned.end(), p) != banned.end();
     };
 
     if (l0 >= 0 && l1 >= 0 && l2 >= 0) {

@@ -10,6 +10,9 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <string>
+#include <sstream>
 
 using namespace std;
 int getxPos(int, const string &);
@@ -188,11 +191,11 @@ double stand_getCAI_s(const vector<int> & rna, const vector<int> & protein) {
         for (int j = 0; j <= 2; j++) {
             codon[j] = rna[3*i+j];
         }
-//        cout << i << endl;
+//        cout << "index: " << i << ", protein: " << p << endl;
         int x = getxPos(p, codon);
         CAI_ans += codon_cai_s[p][x];
     }
-//    cout << CAI_ans << " " << n << endl;
+
     return exp(CAI_ans/n);
 }
 
@@ -220,7 +223,7 @@ int to_int(char a) {
         case 'G': return 2;
         case 'U': return 3;
         default:
-            cout << char(a) << endl;
+            cout << "char: " << char(a) << endl;
             throw invalid_argument("invalid argument to convert to number");
     }
 }
@@ -378,6 +381,58 @@ double evaluate_CAI(string & rna,vector<int> & protein,int type) {
     return CAI;
 
 }
+
+pair<int, int> find_amino_acid_and_codon_index(const vector<int>& codon) {
+    if (codon.size() != 3) {
+        throw std::invalid_argument("Codon must have exactly 3 elements");
+    }
+
+    for (int aa = 0; aa < 20; ++aa) {
+        for (int k = 0; k < 6; ++k) {
+            const int* triplet = nucleotides[aa][k];
+            if (triplet[0] == -1) break;  // End of valid codons for this aa
+
+            if (triplet[0] == codon[0] &&
+                triplet[1] == codon[1] &&
+                triplet[2] == codon[2]) {
+                return {aa, k};  // Found: (amino acid index, codon index)
+            }
+        }
+    }
+
+    return {-1, -1};  // Not found
+}
+
+double evaluate_CAI(string & rna, int type) {
+    int l = int(rna.size());
+    vector<int> seq(l);
+    char2num(seq, rna);
+    double CAI;
+    int n = (int)(l/3);
+    double CAI_ans = 0;
+    int p, x;
+
+    for (int i = 0; i < n; ++i) {
+        vector<int> codon(3);
+
+        for (int j = 0; j <= 2; j++) {
+            codon[j] = seq[3*i+j];
+        }
+        tie(p, x) = find_amino_acid_and_codon_index(codon);
+//        cout << "index: " << i << ", protein: " << p << endl;
+        if (type == 0) {
+            CAI_ans += codon_cai_s[p][x];
+        } else {
+            CAI_ans += codon_cai[p][x];
+        }
+    }
+
+    if (type == 1) return CAI_ans;
+
+    return exp(CAI_ans/n);
+
+}
+
 
 double evaluate_CAI(vector<int> & rna,vector<int> & protein) {
 

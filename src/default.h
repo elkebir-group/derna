@@ -7,13 +7,30 @@
 
 #include <unordered_map>
 #include <fstream>
+#include <queue>
+
 using namespace std;
 
 #include "params/constants.h"
 #define RESCALE_dG(dG, dH, dT)   ((dH) - ((dH) - (dG)) * dT)
 #define PUBLIC
 
+struct BeamEntry {
+    double score;
+    int a, b, i, j, x, y;
+    int backtrace_type;
+    double mfe, cai;
+    vector<int> bt_info;
 
+    BeamEntry(double s = inf, int a_ = -1, int b_ = -1, int i_ = -1, int j_ = -1, int x_ = -1, int y_ = -1,
+              int bt_type = 0, double mfe_ = 0, double cai_ = 0, vector<int> bt = {})
+            : score(s), a(a_), b(b_), i(i_), j(j_), x(x_), y(y_),
+              backtrace_type(bt_type), mfe(mfe_), cai(cai_), bt_info(std::move(bt)) {}
+
+    bool operator<(const BeamEntry &other) const {
+        return score < other.score;
+    }
+};
 
 typedef struct st {
     int i; // index i

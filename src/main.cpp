@@ -1,9 +1,6 @@
 #include <iostream>
-#include <chrono>
 
 #include "Nussinov.h"
-#include "NussinovAlgorithm.h"
-#include "ZukerAlgorithm.h"
 #include "Zuker.h"
 #include "default.h"
 #include "vector"
@@ -89,15 +86,18 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    bool nussinov = false;
-    bool zuker = false;
-    bool test = false;
+    bool nussinov = false, zuker = false, test = false;
+    bool subopt = false;
     switch (model) {
         case 0:
             nussinov = true;
             break;
         case 1:
             zuker = true;
+            break;
+        case 2:
+            zuker = true;
+            subopt = true;
             break;
         case -1:
             test = true;
@@ -229,7 +229,7 @@ int main(int argc, char *argv[]) {
         Z.get_rna_X(zuker_cai_rna_X);
         Z.get_rna_cai(zuker_cai_rna);
         Z.get_bp(zuker_cai_bp);
-
+        Z.save_all_vectors("./");
 
         int type = 0;
 
@@ -244,6 +244,49 @@ int main(int argc, char *argv[]) {
 
         fout << "Codon Adaptation Index: " << CAI_s << endl;
         fout << "Free Energy: " << MFE/100 << endl;
+
+        if (subopt) {
+            mt19937 rng(42);
+            double i = 0.01;
+            while (i < 1000) {
+                cout << "temperature: " << i << endl;
+
+                // temperature 100 missing the last codon
+                // codon does not match amino acid
+                // softmax_sample: options list is empty?
+                //
+                Z.traceback_suboptimal(lambda, i, rng);
+                i *= 10;
+                string subopt_cai_rna(3*n,'.'), subopt_cai_bp(3*n,'.');
+                string subopt_cai_rna_X(3*n, '.');
+//                cout << "traceback done" << endl;
+                Z.get_rna_X(zuker_cai_rna_X);
+//                cout << "getting rna X done" << endl;
+                Z.get_rna_cai(zuker_cai_rna);
+//                cout << "getting rna done" << endl;
+                Z.get_bp(zuker_cai_bp);
+//                cout << "getting bp done" << endl;
+
+//                cout << zuker_cai_rna_X << endl;
+//                cout << zuker_cai_rna << endl;
+//                cout << zuker_cai_bp << endl;
+
+                CAI_s = evaluate_CAI(zuker_cai_rna,protein,type);
+                CAI = evaluate_CAI(zuker_cai_rna,protein,1);
+//                CAI_s = evaluate_CAI(zuker_cai_rna);
+//                CAI = evaluate_CAI(zuker_cai_rna,1);
+                MFE = evaluate_MFE(zuker_cai_rna);
+
+                cout << "lambda: " << lambda << ",O: " << energy_cai << ",cai: " << CAI << ",cai_s: " << CAI_s << ",mfe: " << MFE << ",combined: " << lambda*MFE+(lambda-1)*CAI << endl;
+                fout << "zuker cai bp: " << zuker_cai_bp << ",size: " << zuker_cai_bp.size() << endl;
+                fout << "zuker rna: " << zuker_cai_rna_X << ".size: " << zuker_cai_rna.size() << endl;
+                fout << "zuker cai rna: " << zuker_cai_rna << ".size: " << zuker_cai_rna.size() << endl;
+
+                fout << "Codon Adaptation Index: " << CAI_s << endl;
+                fout << "Free Energy: " << MFE/100 << endl;
+            }
+
+        }
     }
 
     if (zuker && lambda_swipe) {

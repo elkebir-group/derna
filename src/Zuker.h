@@ -8,6 +8,7 @@
 #include <string>
 #include <list>
 #include <iostream>
+#include <random>
 #include <cmath>
 #include "default.h"
 #include "utils.h"
@@ -16,37 +17,29 @@ using namespace std;
 
 class Zuker {
 
-    vector<int> Z;
-    vector<int> E;
-    vector<int> M;
-    vector<int> TM0;
+    vector<int> Z, E, M, TM0;
     vector<double> Z2,E2,M2,TM2;
     vector<double> Z_CAI,E_CAI,M_CAI,TM_CAI;
-    vector<double> O;
-    vector<double> E1;
-    vector<double> M1;
-    vector<double> TM;
+    vector<double> O, E1, M1, TM;
     vector<int> OB, EB, MB;
-    vector<int> protein;
-    vector<bond> bp_bond;
-    vector<int> nucle_seq;
-    vector<int> basepair;
-    vector<stack_> sector;
-    vector<int> ava_nucle_p;
-    vector<int> ava_nucle_m;
-    vector<int> codon_selection;
+    vector<int> protein, nucle_seq, basepair;
     vector<int> start_index, index_offset;
+    vector<int> ava_nucle_p, ava_nucle_m, codon_selection;
+    vector<bond> bp_bond;
+    vector<stack_> sector;
+    vector<vector<int>> O_bt, E_bt, M_bt, TM_bt;
     int n, minX, minY, last_idx;
     int e0;
     double e;
-    vector<vector<int>> O_bt, E_bt, M_bt, TM_bt;
-
 
 public:
     Zuker(int n, int,vector<int> &);
     Zuker(const Zuker &);
     ~Zuker();
     void init_values();
+
+    void save_all_vectors(const std::string& dir = "");
+    void load_all_vectors(const std::string& dir = "");
 
     /**
      * Fill the vector Z where Z[i] stores the minimum free energy at i
@@ -131,7 +124,21 @@ public:
 
     void traceback_B2(double lambda);
 
-    void traceback_MFE(double lambda);
+    static tuple<int, double, vector<int>> softmax_sample(const vector<tuple<int, double, vector<int>>> &options, double temperature, mt19937 &rng);
+
+    void traceback_suboptimal(double lambda, double temperature, mt19937 &rng);
+
+    vector<tuple<int, double, vector<int>>> build_OB_options(
+            int a, int b, int i, int j, int x, int y,
+            double lambda);
+
+    vector<tuple<int, double, vector<int>>> build_MB_options(
+            int a, int b, int i, int j, int x, int y,
+            double lambda);
+
+    vector<tuple<int, double, vector<int>>> build_EB_options(
+            int a, int b, int i, int j, int x, int y,
+            double lambda);
 
     /**
      * Returns RNA secondary structure
