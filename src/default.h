@@ -22,6 +22,9 @@ struct BeamEntry {
     double mfe, cai;
     vector<int> bt_info;
 
+//    BeamEntry() : score(inf), a(-1), b(-1), i(-1), j(-1), x(-1), y(-1),
+//                  backtrace_type(0), mfe(0.0), cai(0.0), bt_info() {}
+
     BeamEntry(double s = inf, int a_ = -1, int b_ = -1, int i_ = -1, int j_ = -1, int x_ = -1, int y_ = -1,
               int bt_type = 0, double mfe_ = 0, double cai_ = 0, vector<int> bt = {})
             : score(s), a(a_), b(b_), i(i_), j(j_), x(x_), y(y_),
@@ -30,6 +33,13 @@ struct BeamEntry {
     bool operator<(const BeamEntry &other) const {
         return score < other.score;
     }
+};
+
+struct LambdaResult {
+    double mfe_value;
+    double cai_value;
+    double CAI_value;
+    double O_val;
 };
 
 typedef struct st {
@@ -46,12 +56,70 @@ typedef struct stack_ {
     int x; // nucleotide at i
     int y; // nucleotide at j
     int ml; //?
+    double change;
+//    vector<int> bi;
 } stack_;
 
 typedef struct bond {
     int i;
     int j;
 } bond;
+
+struct Path {
+    vector<stack_> sector_stack;
+    vector<int> nucle_seq;
+    vector<int> codon_selection;
+    vector<bond> bp_bond;
+    double change = 0;
+    int t, s;
+
+
+    Path(int n) {
+        nucle_seq.resize(3*n, -1);
+        codon_selection.resize(n, -1);
+        bp_bond.resize(3*n);
+//        sector_stack.resize(3*n);
+        bp_bond[0].i = 0;
+        t = 0, s = 0;
+    }
+
+    Path() = default;
+};
+
+struct PathHash {
+    size_t operator()(const Path& p) const {
+        size_t h = 0;
+
+        // Hash nucle_seq
+        for (int x : p.nucle_seq) {
+            h ^= std::hash<int>{}(x) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        }
+
+        // Hash change (rounded to avoid floating point noise)
+        long long rounded = static_cast<long long>(p.change * 1e6);  // adjust precision as needed
+        h ^= std::hash<long long>{}(rounded) + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+        return h;
+    }
+};
+
+struct PathEqual {
+    bool operator()(const Path& a, const Path& b) const {
+        return a.nucle_seq == b.nucle_seq && std::abs(a.change - b.change) < 1e-6;
+    }
+};
+
+struct OptionKey {
+    int t;
+    double e1, e2;
+
+    bool operator<(const OptionKey& other) const {
+        if (t != other.t) return t < other.t;
+        if (std::abs(e1 - other.e1) > EPSILON) return e1 < other.e1;
+        if (std::abs(e2 - other.e2) > EPSILON) return e2 < other.e2;
+        return false;
+    }
+};
 
 extern vector<double> Log;
 

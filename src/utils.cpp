@@ -508,3 +508,7 @@ int evaluate_BP_N(string & rna, int g) {
     return bp;
 
 }
+
+bool is_complete_path(const Path& path) {
+    return path.sector_stack.empty();
+}

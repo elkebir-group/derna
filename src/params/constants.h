@@ -4,6 +4,7 @@
 
 #ifndef RNA_DESIGN_CONSTANTS_H
 #define RNA_DESIGN_CONSTANTS_H
+#include <limits>
 
 /** The gas constant */
 #define GASCONST 1.98717  /* in [cal/K] */

@@ -1708,7 +1708,6 @@ void scale_params(const string & file, const string & paramspath, double temp) {
             } else if (codon_usage[i][j] == 0) {
                 codon_cai[i][j] = -INF; //*100.0
                 codon_cai_s[i][j] = -INF;
-
             } else {
                 codon_cai[i][j] = log(codon_usage[i][j]/max_c); //*100.0
                 codon_cai_s[i][j] = log(codon_usage[i][j]/max_c);

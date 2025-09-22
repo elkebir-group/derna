@@ -28,12 +28,14 @@ class Zuker {
     vector<bond> bp_bond;
     vector<stack_> sector;
     vector<vector<int>> O_bt, E_bt, M_bt, TM_bt;
+    unordered_map<int, BeamEntry> O_beam, E_beam, M_beam, TM_beam;
     int n, minX, minY, last_idx;
     int e0;
     double e;
+    int k;
 
 public:
-    Zuker(int n, int,vector<int> &);
+    Zuker(int n, int, vector<int> &, int k = NULL);
     Zuker(const Zuker &);
     ~Zuker();
     void init_values();
@@ -108,6 +110,8 @@ public:
      * */
     void calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lambda); //vector<double> &
 
+    void calculate_M_beam(int a, int b, int i, int j, int x, int y, double lambda); //vector<double> &
+
     /**
      * Find RNA sequence and secondary structure
      * */
@@ -126,19 +130,27 @@ public:
 
     static tuple<int, double, vector<int>> softmax_sample(const vector<tuple<int, double, vector<int>>> &options, double temperature, mt19937 &rng);
 
-    void traceback_suboptimal(double lambda, double temperature, mt19937 &rng);
+    static tuple<int, double, double, double, vector<int>> uniform_sample(const vector<tuple<int, double, double, double, vector<int>>> &options,
+                                                          mt19937 &rng);
 
-    vector<tuple<int, double, vector<int>>> build_OB_options(
-            int a, int b, int i, int j, int x, int y,
-            double lambda);
+    void traceback_suboptimal(double lambda, double gamma, mt19937 &rng, double min_gamma = 0.5);
 
-    vector<tuple<int, double, vector<int>>> build_MB_options(
-            int a, int b, int i, int j, int x, int y,
-            double lambda);
+//    void traceback_enumerate(double lambda, double gamma, double min_gamma, vector<Path> &all_paths);
+    void load_path(const Path& path);
+    void traceback_enumerate_dfs(double lambda, double gamma, size_t max_num_paths, vector<Path> &all_paths, double min_gamma = 0.5);
+    size_t traceback_count_dfs(double lambda, double gamma, double min_gamma = 0.5);
 
-    vector<tuple<int, double, vector<int>>> build_EB_options(
-            int a, int b, int i, int j, int x, int y,
-            double lambda);
+    vector<tuple<int, double, double, double, vector<int>>> build_OB_options(
+            int a, int b, int i, int j, int x, int y, double cum_en,
+            double lambda, double gamma = 0.9);
+
+    vector<tuple<int, double, double, double, vector<int>>> build_MB_options(
+            int a, int b, int i, int j, int x, int y, double cum_en,
+            double lambda, double gamma = 0.9);
+
+    vector<tuple<int, double, double, double, vector<int>>> build_EB_options(
+            int a, int b, int i, int j, int x, int y, double cum_en,
+            double lambda, double gamma = 0.9);
 
     /**
      * Returns RNA secondary structure
@@ -332,7 +344,11 @@ public:
      * */
     inline double &Access_M1(int index);
 
-//    inline int ava_nucleotides_int(int, int, int, int, int);
+    double calculate_O_beam(ostream &, double lambda);
+
+    void calculate_E_beam(double lambda);
+
+    double hairpin_beam(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y);
 
 private:
     /**
@@ -447,7 +463,9 @@ private:
      * @return minimum energy among stacking, bulge, and internal loops structures
      * integrating with codon adaptation index
      */
-    double internal_CAI(double lambda, int a, int b,int i, int j, int x, int y, int la, int lb, int xi, int yj);
+    double internal_CAI(double lambda, int a, int b,int i, int j, int x, int y, int la, int lb, int xi, int yj, bool beam = false);
+
+    double internal_beam(double lambda, int a, int b,int i, int j, int x, int y, int la, int lb, int xi, int yj);
 
 
     /**
@@ -496,7 +514,9 @@ private:
      */
     int multi_loop(int a, int b, int i, int j, int x, int y, int pa, int pb, int n_codon_an, int n_codon_bp);
 
-    double multi_loop_CAI(double,int,int,int,int,int,int,int,int,int,int);
+    double multi_loop_CAI(double,int,int,int,int,int,int,int,int,int,int, bool beam = false);
+
+    double multi_loop_beam(double,int,int,int,int,int,int,int,int,int,int);
 
 
 
@@ -523,7 +543,7 @@ private:
      * @param fout ostream object for stdout
      * @return minimum energy of hairpin structure among all possible sequences between la and lb, considering CAI
      */
-    double hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y);
+    double hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y, bool beam = false);
 
     tuple<double, double, double, vector<int>> hairpin_special_CAI(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int x1, int y1, int xi, int xi_, int _yj, int yj, int x, int y, int i, int j);
 
@@ -574,6 +594,9 @@ private:
     bool rightCodon(int l1, int l2, int x, int y) const;
     void reinit();
     void maxCAISeq();
+
+    void helper_E(int a, int b, int i, int j, int x, int y, double lambda, priority_queue<BeamEntry> &curr_beam);
+    void helper_O(int a, int b, int i, int j, int x, int y, double lambda, priority_queue<BeamEntry> &curr_beam);
 };
 
 inline int Zuker::ava_nucleotides_int(int a, int x, int i, int dir) {

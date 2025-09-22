@@ -90,6 +90,8 @@ int evaluate_BP_N(string &, int);
 void usage();
 void help();
 
+bool is_complete_path(const Path& path);
+
 // Save and load helpers
 template<typename T>
 void save_vector_binary(const vector<T> &vec, const string &filename) {

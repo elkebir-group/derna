@@ -87,7 +87,7 @@ int main(int argc, char *argv[]) {
     }
 
     bool nussinov = false, zuker = false, test = false;
-    bool subopt = false;
+    bool subopt = false, subopt_all = false;
     switch (model) {
         case 0:
             nussinov = true;
@@ -98,6 +98,10 @@ int main(int argc, char *argv[]) {
         case 2:
             zuker = true;
             subopt = true;
+            break;
+        case 3:
+            zuker = true;
+            subopt_all = true;
             break;
         case -1:
             test = true;
@@ -245,47 +249,131 @@ int main(int argc, char *argv[]) {
         fout << "Codon Adaptation Index: " << CAI_s << endl;
         fout << "Free Energy: " << MFE/100 << endl;
 
-        if (subopt) {
-            mt19937 rng(42);
-            double i = 0.01;
-            while (i < 1000) {
-                cout << "temperature: " << i << endl;
 
-                // temperature 100 missing the last codon
-                // codon does not match amino acid
-                // softmax_sample: options list is empty?
-                //
+
+
+        if (subopt) {
+            mt19937 rng(60);
+            double i = 1;
+
+            // Open CSV file:
+            ofstream csv_fout("zuker_subopt_sample.csv");
+            csv_fout << "gamma,sequence,bp,MFE,CAI,combined,optimal,count\n";
+
+
+            while (i >= 0.99) {
+                cout << "gamma: " << i << endl;
+
                 Z.traceback_suboptimal(lambda, i, rng);
-                i *= 10;
+
                 string subopt_cai_rna(3*n,'.'), subopt_cai_bp(3*n,'.');
                 string subopt_cai_rna_X(3*n, '.');
-//                cout << "traceback done" << endl;
-                Z.get_rna_X(zuker_cai_rna_X);
-//                cout << "getting rna X done" << endl;
-                Z.get_rna_cai(zuker_cai_rna);
-//                cout << "getting rna done" << endl;
-                Z.get_bp(zuker_cai_bp);
-//                cout << "getting bp done" << endl;
 
-//                cout << zuker_cai_rna_X << endl;
-//                cout << zuker_cai_rna << endl;
-//                cout << zuker_cai_bp << endl;
+                Z.get_rna_X(subopt_cai_rna_X);
+                Z.get_rna_cai(subopt_cai_rna);
+                Z.get_bp(subopt_cai_bp);
 
-                CAI_s = evaluate_CAI(zuker_cai_rna,protein,type);
-                CAI = evaluate_CAI(zuker_cai_rna,protein,1);
-//                CAI_s = evaluate_CAI(zuker_cai_rna);
-//                CAI = evaluate_CAI(zuker_cai_rna,1);
-                MFE = evaluate_MFE(zuker_cai_rna);
+                CAI_s = evaluate_CAI(subopt_cai_rna,protein,type);
+                CAI = evaluate_CAI(subopt_cai_rna,protein,1);
+                MFE = evaluate_MFE(subopt_cai_rna);
 
-                cout << "lambda: " << lambda << ",O: " << energy_cai << ",cai: " << CAI << ",cai_s: " << CAI_s << ",mfe: " << MFE << ",combined: " << lambda*MFE+(lambda-1)*CAI << endl;
-                fout << "zuker cai bp: " << zuker_cai_bp << ",size: " << zuker_cai_bp.size() << endl;
-                fout << "zuker rna: " << zuker_cai_rna_X << ".size: " << zuker_cai_rna.size() << endl;
-                fout << "zuker cai rna: " << zuker_cai_rna << ".size: " << zuker_cai_rna.size() << endl;
+                double combined = lambda*MFE + (lambda-1)*CAI;
+                int is_optimal = (combined == energy_cai ? 1 : 0); // Always 0 for subopt paths in this block
+
+//                vector<Path> all_paths;
+//                Z.traceback_enumerate_dfs(lambda, i, 20000, all_paths);
+                size_t count = Z.traceback_count_dfs(lambda, i);
+
+                // Console output
+                cout << "lambda: " << lambda << ",O: " << energy_cai << ",cai: " << CAI
+                     << ",cai_s: " << CAI_s << ",mfe: " << MFE
+                     << ",combined: " << combined << ",count: " << count << endl;
+
+                fout << "zuker cai bp: " << subopt_cai_bp << ",size: " << subopt_cai_bp.size() << endl;
+                fout << "zuker rna: " << subopt_cai_rna_X << ".size: " << subopt_cai_rna.size() << endl;
+                fout << "zuker cai rna: " << subopt_cai_rna << ".size: " << subopt_cai_rna.size() << endl;
 
                 fout << "Codon Adaptation Index: " << CAI_s << endl;
                 fout << "Free Energy: " << MFE/100 << endl;
+                fout << "---------" << endl;
+
+                // CSV output
+                csv_fout << i << "," // gamma
+                         << subopt_cai_rna << ","
+                         << subopt_cai_bp << ","
+                         << MFE/100 << ","
+                         << CAI_s << ","
+                         << combined << ","
+                         << is_optimal << ","
+                         << count << "\n";
+
+                i -= 0.001;
             }
 
+
+
+            csv_fout.close();
+        }
+
+        double gamma = 0.99;
+        if (subopt_all) {
+            vector<Path> all_paths;
+            Z.traceback_enumerate_dfs(lambda, gamma, inf, all_paths); // e.g. 1000 paths
+
+            cout << "Total paths: " << all_paths.size() << endl;
+
+            ofstream csv_fout("zuker_subopt_paths_0.99.csv");
+            csv_fout << "sequence,bp,MFE,CAI,combined,optimal,path\n";
+
+            csv_fout << zuker_cai_rna << ","
+                     << zuker_cai_bp << ","
+                     << MFE/100 << ","      // as you output it in your console
+                     << CAI_s << ","        // you said use CAI_s here
+                     << energy_cai << ","
+                     << 1 << ","
+                     << energy_cai << "\n";
+
+            for (size_t p = 0; p < all_paths.size(); ++p) {
+                const Path& path = all_paths[p];
+
+                // Assign path data into Z internal state:
+                Z.load_path(path);
+
+                // Prepare output strings:
+                string subopt_cai_rna(3*n, '.');
+                string subopt_cai_bp(3*n, '.');
+                string subopt_cai_rna_X(3*n, '.');
+
+                // Call your usual functions:
+                Z.get_rna_X(subopt_cai_rna_X);
+                Z.get_rna_cai(subopt_cai_rna);
+                Z.get_bp(subopt_cai_bp);
+
+                CAI_s = evaluate_CAI(subopt_cai_rna, protein, type);
+                CAI   = evaluate_CAI(subopt_cai_rna, protein, 1);
+                MFE   = evaluate_MFE(subopt_cai_rna);
+
+                double combined = lambda*MFE + (lambda-1)*CAI;
+                int is_optimal = (combined == energy_cai ? 1 : 0);
+
+                // Console output
+                cout << "Path " << p+1 << " / " << all_paths.size() << endl;
+                cout << "RNA_X : " << subopt_cai_rna_X << endl;
+                cout << "RNA   : " << subopt_cai_rna << endl;
+                cout << "BP    : " << subopt_cai_bp << endl;
+                cout << "lambda: " << lambda << ",O: " << energy_cai << ",cai: " << CAI << ",cai_s: " << CAI_s << ",mfe: " << MFE << ",combined: " << combined << ",path sum: " << path.change << endl;
+                cout << "---------" << endl;
+
+                // CSV output
+                csv_fout << subopt_cai_rna << ","
+                         << subopt_cai_bp << ","
+                         << MFE/100 << ","      // as you output it in your console
+                         << CAI_s << ","        // you said use CAI_s here
+                         << combined << ","
+                         << is_optimal << ","
+                         << path.change << "\n";
+            }
+            csv_fout.close();
         }
     }
 
