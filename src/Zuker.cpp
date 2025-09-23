@@ -7071,31 +7071,31 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
              << ",MFE: " << mfe_value
              << ",combined: " << lambda_value * mfe_value + (lambda_value - 1) * CAI_value << endl;
 
-        // Suboptimal
-        try {
-            mt19937 rng(42);
-            cout << "subopt lambda: " << lambda_value << endl;
-            traceback_suboptimal(lambda_value, 0.95, rng);
-            get_rna_cai(rna_sub);
-            get_bp(bp_sub);
-
-            cai_value_sub = evaluate_CAI(rna_sub);
-            mfe_value_sub = evaluate_MFE(rna_sub);
-
-            fout << "subopt rna: " << rna_sub << endl;
-            fout << "subopt bp: " << bp_sub << endl;
-
-            cout << "subopt lambda: " << lambda_value
-                 << ",O: " << O_val
-                 << ",CAI: " << CAI_value
-                 << ",sCAI: " << cai_value_sub
-                 << ",MFE: " << mfe_value_sub
-                 << ",combined: " << lambda_value * mfe_value_sub + (lambda_value - 1) * CAI_value << endl;
-        } catch (const exception& e) {
-            mfe_value_sub = 0.0;
-            cai_value_sub = 0.0;
-            cerr << "Error during suboptimal traceback: " << e.what() << endl;
-        }
+//        // Suboptimal
+//        try {
+//            mt19937 rng(42);
+//            cout << "subopt lambda: " << lambda_value << endl;
+//            traceback_suboptimal(lambda_value, 0.95, rng);
+//            get_rna_cai(rna_sub);
+//            get_bp(bp_sub);
+//
+//            cai_value_sub = evaluate_CAI(rna_sub);
+//            mfe_value_sub = evaluate_MFE(rna_sub);
+//
+//            fout << "subopt rna: " << rna_sub << endl;
+//            fout << "subopt bp: " << bp_sub << endl;
+//
+//            cout << "subopt lambda: " << lambda_value
+//                 << ",O: " << O_val
+//                 << ",CAI: " << CAI_value
+//                 << ",sCAI: " << cai_value_sub
+//                 << ",MFE: " << mfe_value_sub
+//                 << ",combined: " << lambda_value * mfe_value_sub + (lambda_value - 1) * CAI_value << endl;
+//        } catch (const exception& e) {
+//            mfe_value_sub = 0.0;
+//            cai_value_sub = 0.0;
+//            cerr << "Error during suboptimal traceback: " << e.what() << endl;
+//        }
 
         // CSV row
         csv_fout << lambda_value << ","
