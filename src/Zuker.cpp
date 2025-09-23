@@ -4,6 +4,7 @@
 
 #include "Zuker.h"
 #include "utils.h"
+#include <chrono>
 #include <tuple>
 #include <cmath>
 #include <vector>

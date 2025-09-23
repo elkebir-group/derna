@@ -3,9 +3,10 @@
 #include "Nussinov.h"
 #include "Zuker.h"
 #include "default.h"
-#include "vector"
 #include <string>
 #include <tuple>
+#include <vector>
+#include <chrono>
 #include "utils.h"
 #include "params/constants.h"
 

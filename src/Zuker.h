@@ -35,7 +35,8 @@ class Zuker {
     int k;
 
 public:
-    Zuker(int n, int, vector<int> &, int k = NULL);
+//    Zuker(int n, int, vector<int> &, int k = NULL);
+    Zuker(int n, int, vector<int> &, int k = 0);
     Zuker(const Zuker &);
     ~Zuker();
     void init_values();
