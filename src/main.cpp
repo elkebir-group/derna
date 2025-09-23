@@ -98,11 +98,11 @@ int main(int argc, char *argv[]) {
             break;
         case 2:
             zuker = true;
-            subopt = true;
+//            subopt = true;
             break;
         case 3:
             zuker = true;
-            subopt_all = true;
+//            subopt_all = true;
             break;
         case -1:
             test = true;
