@@ -6991,129 +6991,171 @@ void Zuker::calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lam
 
 }
 
-void Zuker::lambda_swipe(double incr, ostream &fout, string & outfile) {
-    int size = ceil(1/incr + 1);
-    vector<double> O_buffer(size, 0);
-    vector<double> lambda_buffer(size, 0);
-    vector<double> F_buffer(size, 0);
-    vector<double> CAI_buffer(size, 0);
-    vector<double> stand_CAI(size, 0);
-    vector<pair<string, vector<double>>> dataset(5);
-    int index = 0;
-    double lambda = 0;
-    while (lambda < 1.001) {
-        fout << "lambda: " << lambda << endl;
+void Zuker::lambda_swipe(double incr, std::ostream &fout, std::string &outfile) {
+    // Open CSV and write header.
+    std::ofstream csv_fout(outfile + ".csv");
+    // Columns: lambda, O (objective term from calculate_CAI_O), rc_* metrics, and seq/structure
+    csv_fout << "lambda,O,rc_mfe,rc_CAI,rc_sCAI,rc_seq,rc_bp\n";
+
+    // Optional: control numeric formatting for consistency
+    csv_fout.setf(std::ios::fixed);
+    csv_fout.precision(10);
+
+    // Sweep lambda in [0, 1] with step incr (guard against FP drift)
+    double lambda = 0.0;
+    while (lambda <= 1.0 + 1e-12) {
+        fout << "lambda: " << lambda << std::endl;
+
+        // Recompute DP for this lambda
         reinit();
-        string rna(3*n, '.'), bp(3*n, '.');
-        double Ov = calculate_CAI_O(fout,lambda);
-        O_buffer[index] = Ov;
-        cout << "traceback" << endl;
+
+        // Prepare containers
+        std::string rna(3 * n, '.'), bp(3 * n, '.');
+
+        // Compute objective auxiliary term O(lambda)
+        double O_val = calculate_CAI_O(fout, lambda);
+
+        // Traceback best solution for this lambda
+        // (B2 variant, then extract sequence/structure)
         traceback_B2(lambda);
         get_rna_cai(rna);
         get_bp(bp);
-        fout << "rna: " << rna << endl;
-        fout << "bp: " << bp << endl;
-        double CAI = evaluate_CAI(rna, protein, 1);
-        double cai = evaluate_CAI(rna, protein, 0);
-        lambda_buffer[index] = lambda;
-        double mfe = evaluate_MFE(rna);
-        cout << "lambda: " << lambda << ",O: " << Ov << ",cai: " << CAI << ",sCAI: " << cai << ",mfe: " << mfe << ",combined: " << lambda*mfe+(lambda-1)*CAI << endl;
-        F_buffer[index] = mfe;
-        CAI_buffer[index] = CAI;
-        stand_CAI[index] = cai;
-        index++;
+
+        // Evaluate metrics on the recovered RNA
+        double rc_CAI  = evaluate_CAI(rna, protein, /*scaled?*/ 1);
+        double rc_sCAI = evaluate_CAI(rna, protein, /*scaled?*/ 0);
+        double rc_mfe  = evaluate_MFE(rna);
+
+        fout << "rna: " << rna << std::endl;
+        fout << "bp: "  << bp  << std::endl;
+
+        std::cout << "lambda: " << lambda
+                  << ",O: "     << O_val
+                  << ",cai: "   << rc_CAI
+                  << ",sCAI: "  << rc_sCAI
+                  << ",mfe: "   << rc_mfe
+                  << ",combined: " << (lambda * rc_mfe + (lambda - 1) * rc_CAI)
+                  << std::endl;
+
+        // Write CSV row (wrap seq/bp to be safe if parser expects raw commas)
+        csv_fout << lambda << ","
+                 << O_val  << ","
+                 << rc_mfe << ","
+                 << rc_CAI << ","
+                 << rc_sCAI << ","
+                 << rna << ","
+                 << bp  << "\n";
+
+        // Advance lambda, clamp final step to 1.0 to avoid drift
         lambda += incr;
+        if (lambda > 1.0 && lambda < 1.0 + 2e-12) lambda = 1.0;
+        if (lambda > 1.0 + 1e-9) break;
     }
-    dataset[0] = make_pair("lambda", lambda_buffer);
-    dataset[1] = make_pair("F", F_buffer);
-    dataset[2] = make_pair("CAI", CAI_buffer);
-    dataset[3] = make_pair("sCAI", stand_CAI);
-    dataset[4] = make_pair('O', O_buffer);
-    write_csv(outfile + ".csv", dataset);
-    cout << "swipe done" << endl;
+
+    csv_fout.flush();
+    csv_fout.close();
+    std::cout << "swipe done, CSV written to " << outfile << ".csv" << std::endl;
 }
 
-void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, string &outfile) {
-    ofstream csv_fout(outfile + ".csv");
-    csv_fout << "lambda,rc_mfe,rc_CAI,rc_sCAI,sub_mfe,sub_CAI,sub_sCAI\n";
+void Zuker::lambda_swipe_2(double threshold, double threshold2, std::ostream &fout, std::string &outfile) {
+    std::ofstream csv_fout(outfile + ".csv");
+    csv_fout << "lambda,rc_mfe,rc_CAI,rc_sCAI,rc_seq,rc_bp,sub_mfe,sub_CAI,sub_sCAI,sub_seq,sub_bp\n";
 
-    unordered_set<double> processed_lambdas;
-    unordered_map<double, LambdaResult> lambda_results;
+    std::unordered_set<double> processed_lambdas;
+    std::unordered_map<double, LambdaResult> lambda_results;
 
     auto process_lambda = [&](double lambda_value,
-                              ofstream &csv_fout,
-                              ostream &fout) -> LambdaResult
+                              std::ofstream &csv_fout,
+                              std::ostream &fout) -> LambdaResult
     {
-        string rna(3*n, '.'), bp(3*n, '.'), rna_sub(3*n, '.'), bp_sub(3*n, '.');
-        double cai_value_sub = 0, mfe_value_sub = 0;
-        double O_val = 0;
-        double CAI_value = 0, cai_value = 0, mfe_value = 0;
+        // main (rc_*) outputs
+        std::string rna(3*n, '.'), bp(3*n, '.');
+        double CAI_value = 0.0;   // rc_CAI
+        double sCAI_value = 0.0;  // rc_sCAI
+        double mfe_value = 0.0;   // rc_mfe
+
+        // suboptimal (sub_*) defaults: NaN for numeric, "None" for strings
+        std::string rna_sub = "None", bp_sub = "None";
+        double sub_mfe  = std::numeric_limits<double>::quiet_NaN();
+        double sub_CAI  = std::numeric_limits<double>::quiet_NaN();
+        double sub_sCAI = std::numeric_limits<double>::quiet_NaN();
+
+        double O_val = 0.0;
 
         // Always recompute DP
         reinit();
-        fout << "lambda: " << lambda_value << endl;
+        fout << "lambda: " << lambda_value << std::endl;
         O_val = calculate_CAI_O(fout, lambda_value);
+
         traceback_B2(lambda_value);
         get_rna_cai(rna);
         get_bp(bp);
 
-        CAI_value = evaluate_CAI(rna, protein, 1);
-        cai_value = evaluate_CAI(rna, protein, 0);
-        mfe_value = evaluate_MFE(rna);
+        // Evaluate main solution
+        CAI_value = evaluate_CAI(rna, protein, /*scaled?*/ 1);  // rc_CAI
+        sCAI_value = evaluate_CAI(rna, protein, /*scaled?*/ 0); // rc_sCAI
+        mfe_value = evaluate_MFE(rna);                          // rc_mfe
 
-        fout << "rna: " << rna << endl;
-        fout << "bp: " << bp << endl;
+        fout << "rna: " << rna << std::endl;
+        fout << "bp: " << bp << std::endl;
 
-        cout << "lambda: " << lambda_value
-             << ",O: " << O_val
-             << ",CAI: " << CAI_value
-             << ",sCAI: " << cai_value
-             << ",MFE: " << mfe_value
-             << ",combined: " << lambda_value * mfe_value + (lambda_value - 1) * CAI_value << endl;
+        std::cout << "lambda: " << lambda_value
+                  << ",O: " << O_val
+                  << ",CAI: " << CAI_value
+                  << ",sCAI: " << sCAI_value
+                  << ",MFE: " << mfe_value
+                  << ",combined: " << (lambda_value * mfe_value + (lambda_value - 1) * CAI_value)
+                  << std::endl;
 
-//        // Suboptimal
-//        try {
-//            mt19937 rng(42);
-//            cout << "subopt lambda: " << lambda_value << endl;
-//            traceback_suboptimal(lambda_value, 0.95, rng);
-//            get_rna_cai(rna_sub);
-//            get_bp(bp_sub);
-//
-//            cai_value_sub = evaluate_CAI(rna_sub);
-//            mfe_value_sub = evaluate_MFE(rna_sub);
-//
-//            fout << "subopt rna: " << rna_sub << endl;
-//            fout << "subopt bp: " << bp_sub << endl;
-//
-//            cout << "subopt lambda: " << lambda_value
-//                 << ",O: " << O_val
-//                 << ",CAI: " << CAI_value
-//                 << ",sCAI: " << cai_value_sub
-//                 << ",MFE: " << mfe_value_sub
-//                 << ",combined: " << lambda_value * mfe_value_sub + (lambda_value - 1) * CAI_value << endl;
-//        } catch (const exception& e) {
-//            mfe_value_sub = 0.0;
-//            cai_value_sub = 0.0;
-//            cerr << "Error during suboptimal traceback: " << e.what() << endl;
-//        }
+        // -------- Optional suboptimal block --------
+        // If you later want suboptimal outputs, uncomment and fill rna_sub/bp_sub and metrics.
+        /*
+        try {
+            std::mt19937 rng(42);
+            traceback_suboptimal(lambda_value, 0.95, rng);
 
-        // CSV row
+            rna_sub.assign(3*n, '.');
+            bp_sub.assign(3*n, '.');
+            get_rna_cai(rna_sub);
+            get_bp(bp_sub);
+
+            sub_CAI  = evaluate_CAI(rna_sub, protein, 1); // sub_CAI
+            sub_sCAI = evaluate_CAI(rna_sub, protein, 0); // sub_sCAI
+            sub_mfe  = evaluate_MFE(rna_sub);             // sub_mfe
+
+            fout << "subopt rna: " << rna_sub << std::endl;
+            fout << "subopt bp: " << bp_sub << std::endl;
+        } catch (const std::exception& e) {
+            rna_sub = "None";
+            bp_sub  = "None";
+            sub_mfe = std::numeric_limits<double>::quiet_NaN();
+            sub_CAI = std::numeric_limits<double>::quiet_NaN();
+            sub_sCAI = std::numeric_limits<double>::quiet_NaN();
+            std::cerr << "Error during suboptimal traceback: " << e.what() << std::endl;
+        }
+        */
+
+        // ---- Write CSV row ----
+        // Note: NaN doubles will be written as "nan" by the stream.
         csv_fout << lambda_value << ","
-                 << mfe_value << ","
-                 << CAI_value << ","
-                 << cai_value << ","
-                 << mfe_value_sub << ","
-                 << CAI_value << ","  // reuse CAI_value unless you compute CAI_value_sub separately
-                 << cai_value_sub << "\n";
+                 << mfe_value   << ","
+                 << CAI_value   << ","
+                 << sCAI_value  << ","
+                 << rna         << ","
+                 << bp          << ","
+                 << sub_mfe     << ","
+                 << sub_CAI     << ","
+                 << sub_sCAI    << ","
+                 << rna_sub     << ","
+                 << bp_sub      << "\n";
 
-        // Return results
-        return LambdaResult{mfe_value, cai_value, CAI_value, O_val};
+        return LambdaResult{mfe_value, sCAI_value, CAI_value, O_val};
     };
 
     // ---- main body ----
-    double left_lambda, right_lambda;
-    queue<pair<double, double>> lambda;
-    lambda.emplace(EPSILON, 1-EPSILON);
+    double left_lambda = 0.0, right_lambda = 0.0;
+    std::queue<std::pair<double, double>> lambda;
+    lambda.emplace(EPSILON, 1 - EPSILON);
 
     while (!lambda.empty()) {
         left_lambda  = lambda.front().first;
@@ -7128,7 +7170,6 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
             processed_lambdas.insert(left_lambda);
             lambda_results[left_lambda] = left_res;
         } else {
-//            cout << "Skipping already processed lambda: " << left_lambda << endl;
             left_res = lambda_results[left_lambda];
         }
 
@@ -7138,7 +7179,6 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
             processed_lambdas.insert(right_lambda);
             lambda_results[right_lambda] = right_res;
         } else {
-//            cout << "Skipping already processed lambda: " << right_lambda << endl;
             right_res = lambda_results[right_lambda];
         }
 
@@ -7146,21 +7186,148 @@ void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, s
         if (!compare(left_res.cai_value, right_res.cai_value) &&
             !compare(left_res.mfe_value, right_res.mfe_value)) {
 
-//            cout << "lambda diff: " << right_lambda - left_lambda << endl;
-
             double threshold_to_use = (right_lambda < threshold) ? threshold2 : threshold;
             if (!compare(left_lambda, right_lambda, threshold_to_use)) {
-                double m = (left_lambda + right_lambda) / 2;
+                double m = (left_lambda + right_lambda) / 2.0;
                 lambda.emplace(left_lambda, m);
                 lambda.emplace(m, right_lambda);
             }
         }
     }
 
-    cout << "lambda queue size: " << lambda.size() << endl;
-    fout << "Final left lambda: " << left_lambda << ", right lambda: " << right_lambda << endl;
-    cout << "swipe done, CSV written to " << outfile << ".csv" << endl;
+    std::cout << "lambda queue size: " << lambda.size() << std::endl;
+    fout << "Final left lambda: " << left_lambda << ", right lambda: " << right_lambda << std::endl;
+    std::cout << "swipe done, CSV written to " << outfile << ".csv" << std::endl;
 }
+
+//void Zuker::lambda_swipe_2(double threshold, double threshold2, ostream &fout, string &outfile) {
+//    ofstream csv_fout(outfile + ".csv");
+//    csv_fout << "lambda,rc_mfe,rc_CAI,rc_sCAI,sub_mfe,sub_CAI,sub_sCAI\n";
+//
+//    unordered_set<double> processed_lambdas;
+//    unordered_map<double, LambdaResult> lambda_results;
+//
+//    auto process_lambda = [&](double lambda_value,
+//                              ofstream &csv_fout,
+//                              ostream &fout) -> LambdaResult
+//    {
+//        string rna(3*n, '.'), bp(3*n, '.'), rna_sub(3*n, '.'), bp_sub(3*n, '.');
+//        double cai_value_sub = 0, mfe_value_sub = 0;
+//        double O_val = 0;
+//        double CAI_value = 0, cai_value = 0, mfe_value = 0;
+//
+//        // Always recompute DP
+//        reinit();
+//        fout << "lambda: " << lambda_value << endl;
+//        O_val = calculate_CAI_O(fout, lambda_value);
+//        traceback_B2(lambda_value);
+//        get_rna_cai(rna);
+//        get_bp(bp);
+//
+//        CAI_value = evaluate_CAI(rna, protein, 1);
+//        cai_value = evaluate_CAI(rna, protein, 0);
+//        mfe_value = evaluate_MFE(rna);
+//
+//        fout << "rna: " << rna << endl;
+//        fout << "bp: " << bp << endl;
+//
+//        cout << "lambda: " << lambda_value
+//             << ",O: " << O_val
+//             << ",CAI: " << CAI_value
+//             << ",sCAI: " << cai_value
+//             << ",MFE: " << mfe_value
+//             << ",combined: " << lambda_value * mfe_value + (lambda_value - 1) * CAI_value << endl;
+//
+////        // Suboptimal
+////        try {
+////            mt19937 rng(42);
+////            cout << "subopt lambda: " << lambda_value << endl;
+////            traceback_suboptimal(lambda_value, 0.95, rng);
+////            get_rna_cai(rna_sub);
+////            get_bp(bp_sub);
+////
+////            cai_value_sub = evaluate_CAI(rna_sub);
+////            mfe_value_sub = evaluate_MFE(rna_sub);
+////
+////            fout << "subopt rna: " << rna_sub << endl;
+////            fout << "subopt bp: " << bp_sub << endl;
+////
+////            cout << "subopt lambda: " << lambda_value
+////                 << ",O: " << O_val
+////                 << ",CAI: " << CAI_value
+////                 << ",sCAI: " << cai_value_sub
+////                 << ",MFE: " << mfe_value_sub
+////                 << ",combined: " << lambda_value * mfe_value_sub + (lambda_value - 1) * CAI_value << endl;
+////        } catch (const exception& e) {
+////            mfe_value_sub = 0.0;
+////            cai_value_sub = 0.0;
+////            cerr << "Error during suboptimal traceback: " << e.what() << endl;
+////        }
+//
+//        // CSV row
+//        csv_fout << lambda_value << ","
+//                 << mfe_value << ","
+//                 << CAI_value << ","
+//                 << cai_value << ","
+//                 << mfe_value_sub << ","
+//                 << CAI_value << ","  // reuse CAI_value unless you compute CAI_value_sub separately
+//                 << cai_value_sub << "\n";
+//
+//        // Return results
+//        return LambdaResult{mfe_value, cai_value, CAI_value, O_val};
+//    };
+//
+//    // ---- main body ----
+//    double left_lambda, right_lambda;
+//    queue<pair<double, double>> lambda;
+//    lambda.emplace(EPSILON, 1-EPSILON);
+//
+//    while (!lambda.empty()) {
+//        left_lambda  = lambda.front().first;
+//        right_lambda = lambda.front().second;
+//        lambda.pop();
+//
+//        LambdaResult left_res, right_res;
+//
+//        // Process left_lambda
+//        if (processed_lambdas.count(left_lambda) == 0) {
+//            left_res = process_lambda(left_lambda, csv_fout, fout);
+//            processed_lambdas.insert(left_lambda);
+//            lambda_results[left_lambda] = left_res;
+//        } else {
+////            cout << "Skipping already processed lambda: " << left_lambda << endl;
+//            left_res = lambda_results[left_lambda];
+//        }
+//
+//        // Process right_lambda
+//        if (processed_lambdas.count(right_lambda) == 0) {
+//            right_res = process_lambda(right_lambda, csv_fout, fout);
+//            processed_lambdas.insert(right_lambda);
+//            lambda_results[right_lambda] = right_res;
+//        } else {
+////            cout << "Skipping already processed lambda: " << right_lambda << endl;
+//            right_res = lambda_results[right_lambda];
+//        }
+//
+//        // Compare and refine
+//        if (!compare(left_res.cai_value, right_res.cai_value) &&
+//            !compare(left_res.mfe_value, right_res.mfe_value)) {
+//
+////            cout << "lambda diff: " << right_lambda - left_lambda << endl;
+//
+//            double threshold_to_use = (right_lambda < threshold) ? threshold2 : threshold;
+//            if (!compare(left_lambda, right_lambda, threshold_to_use)) {
+//                double m = (left_lambda + right_lambda) / 2;
+//                lambda.emplace(left_lambda, m);
+//                lambda.emplace(m, right_lambda);
+//            }
+//        }
+//    }
+//
+//    cout << "lambda queue size: " << lambda.size() << endl;
+//    fout << "Final left lambda: " << left_lambda << ", right lambda: " << right_lambda << endl;
+//    cout << "swipe done, CSV written to " << outfile << ".csv" << endl;
+//}
 
 void Zuker::lambda_swipe_3(double threshold, double threshold2, ostream &fout, string & outfile) {
     double left_lambda;
