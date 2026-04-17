@@ -200,7 +200,7 @@ void ZukerAlgorithm::traceback_2() {
     OUTLOOP:
     while (s > 0) {
         int fij, fi, cij, ci;
-        int traced, i1, j1, k, p, q, bt;
+        int k, p, q, bt;
 
         int i = sector[s].i;
         int j = sector[s].j;

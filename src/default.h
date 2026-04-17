@@ -8,6 +8,9 @@
 #include <unordered_map>
 #include <fstream>
 #include <queue>
+#include <initializer_list>
+#include <cstdint>
+#include <vector>
 
 using namespace std;
 
@@ -15,24 +18,150 @@ using namespace std;
 #define RESCALE_dG(dG, dH, dT)   ((dH) - ((dH) - (dG)) * dT)
 #define PUBLIC
 
+// Fixed-capacity inline backtrace buffer used in place of std::vector<int>
+// for BeamEntry/XYVariant. Trivially copyable (memcpy-able), no heap allocs.
+// Max sizes observed across call sites:
+//   PositionBeamDP.cpp S_C_StoC: 9 ints (worst fixed-layout case)
+//   PositionBeamDP.cpp SpecialHP: up to ~4 ints (codon choices for hairpin span)
+//   Zuker.cpp bifurcation: 7 ints
+//   CS-table tie append (update_cs): potentially unbounded but never read by traceback;
+//       capped silently here, which is correct (only one tied entry is needed).
+// CAP=16 gives comfortable headroom and nice alignment (16*4=64 bytes).
+struct BtInfo {
+    static constexpr int CAP = 16;
+    int8_t len = 0;
+    int data[CAP] = {};
+
+    int size() const { return (int)len; }
+    bool empty() const { return len == 0; }
+    void clear() { len = 0; }
+
+    int  operator[](int k) const { return data[k]; }
+    int& operator[](int k)       { return data[k]; }
+    int  operator[](size_t k) const { return data[k]; }
+    int& operator[](size_t k)       { return data[k]; }
+
+    void push_back(int v) { if (len < CAP) data[len++] = v; }
+
+    void assign(std::initializer_list<int> il) {
+        len = 0;
+        for (int v : il) { if (len < CAP) data[len++] = v; }
+    }
+    BtInfo& operator=(std::initializer_list<int> il) { assign(il); return *this; }
+
+    // Interop with legacy std::vector<int> call sites (Zuker.cpp, PositionBasedBeamZuker.cpp).
+    BtInfo& operator=(const std::vector<int>& v) {
+        len = 0;
+        for (int x : v) { if (len < CAP) data[len++] = x; }
+        return *this;
+    }
+    BtInfo(const std::vector<int>& v) {
+        for (int x : v) { if (len < CAP) data[len++] = x; }
+    }
+    BtInfo(std::initializer_list<int> il) {
+        for (int x : il) { if (len < CAP) data[len++] = x; }
+    }
+    BtInfo() = default;
+
+    const int* begin() const { return data; }
+    const int* end()   const { return data + len; }
+    int* begin() { return data; }
+    int* end()   { return data + len; }
+
+    operator std::vector<int>() const { return std::vector<int>(data, data + len); }
+};
+
+// One codon-pair variant stored inside a merged structural BeamEntry.
+// The BeamEntry's top-level (x,y,mfe,cai,score,bt_info,...) always reflect the BEST variant;
+// the variants vector holds all (x,y) possibilities for extension.
+struct XYVariant {
+    int x = -1, y = -1;
+    double mfe = 0.0, cai = 0.0, score = inf;
+    int backtrace_type = 0;
+    int last_closed_nuc = -1;
+    BtInfo bt_info;
+    // Per-variant CS / structural metadata. Every predecessor-identifying field
+    // must live here, because a merged entry may hold variants whose source
+    // transitions differ: the top-level mirror only reflects the BEST variant.
+    int cs_inner_key = -1;
+    int cs_right_s_key = -1;
+    int cs_right_len = -1;
+    int cs_single_start = -1;
+    int cs_inner_left = -1;
+    int cs_inner_right = -1;
+    long long cs_pack_outer = -1LL;
+    XYVariant() = default;
+    XYVariant(int x_, int y_, double mfe_, double cai_, double sc_,
+              int bt_type_, int last_closed_, const BtInfo& bt_)
+        : x(x_), y(y_), mfe(mfe_), cai(cai_), score(sc_),
+          backtrace_type(bt_type_), last_closed_nuc(last_closed_), bt_info(bt_) {}
+};
+
 struct BeamEntry {
-    double score;
-    int a, b, i, j, x, y;
-    int backtrace_type;
-    double mfe, cai;
-    vector<int> bt_info;
+    // --- 8-BYTE MEMBERS ---
+    double score = inf; // Assuming inf is defined in your scope
+    double mfe = 0.0;
+    double cai = 0.0;
+
+    // --- HEAVY MEMBERS (Pointers / Size_t) ---
+    // Inline fixed-size backtrace (trivially copyable, no heap).
+    BtInfo bt_info;
+
+    // --- 4-BYTE MEMBERS (ints) ---
+    int a = -1;
+    int b = -1;
+    int x = -1;
+    int y = -1;
+
+    int backtrace_type = 0;
+    int last_closed_nuc = -1;
+
+    int cs_inner_key = -1;
+    int cs_right_s_key = -1;
+    int cs_right_len = -1;
+    int cs_single_start = -1;
+    int cs_inner_left = -1;
+    int cs_inner_right = -1;
+    // cs_pack_outer: int CS key from cs_get_index (stored as long long; -1 = not from CS)
+    long long cs_pack_outer = -1LL;
+    long long cs_pack_inner_c = -1; // unused (kept for ABI compat)
+
+    // --- 1-BYTE MEMBERS ---
+    // i and j are guaranteed to be <= 2, so 8 bits is plenty.
+    int8_t i = -1;
+    int8_t j = -1;
+
+    // double score;
+    // int a, b, i, j, x, y;
+    // int backtrace_type;
+    // double mfe, cai;
+    // vector<int> bt_info;  // backtrace keys only; do not use for last_closed_nuc
+    // int last_closed_nuc = -1;  // dedicated: last closing position (for multi-loop SINGLE_MAX_LEN)
+    // // Explicit CS-state payload so CS entries do not rely on geometry reconstruction.
+    // int cs_inner_key = -1;      // predecessor C key used to build this CS state
+    // int cs_right_s_key = -1;    // predecessor right-S key used to build this CS state
+    // int cs_right_len = -1;      // length of the right single segment in this CS state
+    // int cs_single_start = -1;   // starting nucleotide position of the right single segment
+    // int cs_inner_left = -1;     // inner C left boundary position p
+    // int cs_inner_right = -1;    // inner C right boundary position q
 
 //    BeamEntry() : score(inf), a(-1), b(-1), i(-1), j(-1), x(-1), y(-1),
 //                  backtrace_type(0), mfe(0.0), cai(0.0), bt_info() {}
 
     BeamEntry(double s = inf, int a_ = -1, int b_ = -1, int i_ = -1, int j_ = -1, int x_ = -1, int y_ = -1,
-              int bt_type = 0, double mfe_ = 0, double cai_ = 0, vector<int> bt = {})
-            : score(s), a(a_), b(b_), i(i_), j(j_), x(x_), y(y_),
-              backtrace_type(bt_type), mfe(mfe_), cai(cai_), bt_info(std::move(bt)) {}
+              int bt_type = 0, double mfe_ = 0, double cai_ = 0, const BtInfo& bt = BtInfo{}, int last_closed = -1)
+            : score(s), mfe(mfe_), cai(cai_), bt_info(bt),
+              a(a_), b(b_), x(x_), y(y_),
+              backtrace_type(bt_type), last_closed_nuc(last_closed),
+              i(i_), j(j_) {}
 
     bool operator<(const BeamEntry &other) const {
         return score < other.score;
     }
+
+    // All (x,y) codon-pair variants for this structural state, for use during fill expansion.
+    // The top-level x,y,mfe,cai,score,bt_info always mirror the best variant.
+    std::vector<XYVariant> variants;
 };
 
 struct LambdaResult {
@@ -47,6 +176,31 @@ typedef struct st {
     int j; // index j
     int ml; //?
 } st;
+
+// IDEALLY we would reorganize stack_ as follows:
+// struct stack_ {
+//     // --- 8-BYTE MEMBERS ---
+//     double change = 0.0;
+//
+//     // --- 4-BYTE MEMBERS ---
+//     int a = -1;
+//     int b = -1;
+//
+//     // --- 1-BYTE MEMBERS ---
+//     // Assuming i and j are the small 0-2 offsets from BeamEntry
+//     int8_t i = -1;
+//     int8_t j = -1;
+//
+//     // Codons
+//     int8_t x = -1;
+//     int8_t y = -1;
+//
+//     // Assuming ml is a multi-loop boolean flag or small state integer
+//     bool ml = false;
+//
+//     // Total size: 24 bytes (down from 40 bytes)
+//     // 8 (double) + 8 (two ints) + 5 (1-byte types) + 3 bytes padding = 24
+// };
 
 typedef struct stack_ {
     int a;
@@ -205,6 +359,9 @@ extern int ML_BASEdH;
 
 extern int ML_closing37;
 extern int ML_closingdH;
+
+/** Per-pair-type multi-loop stem penalty (LCDSfold v_score_M1 / v_score_multi). tt = pair type 1..NBPAIRS. */
+extern int E_MLstem(int tt);
 
 extern int ML_intern37;
 extern int ML_interndH;

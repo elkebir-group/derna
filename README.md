@@ -80,14 +80,15 @@ make
 ```
 -i - <input file path>
 -o - <output file path>
--m - model <0,1,-1> , 0 for nussinov, 1 for zuker, -1 for eval
+-m - model <0,1,4,-1> , 0 for nussinov, 1 for zuker, 4 for beamzuker, -1 for eval
 -s - mode <1,2,3>, 1 for mfe, 2 for mfe+cai, 3 for sweep
 -l - lambda <[0,1]>
 -a - sweep increment <(0,1]>
 -r - <input rna file path>
 -O - <sweep output csv file name>
--g - <[0,inf)>
--t - threshold tau <(0,1)>
+-g - minimum gap allowed in Nussinov <[0,inf)>
+-k - beam width for BeamZuker <[1,inf)>, default=10
+-t - threshold tau1 <(0,1)>
 -p - threshold tau2 <(0,1)>
 -c - <codon usage table file path>
 -d - <energy parameters (model) directory>
@@ -100,13 +101,18 @@ make
 ```
 input: input file path 
 output: output file path 
-model: integer 0 for Nussinov based model, 1 for Zuker based model, -1 for eval model 
+model: integer 0 for Nussinov based model, 1 for Zuker based model, 4 for BeamZuker based model, -1 for eval model 
 mode: integer 1 for only MFE mode, integer 2 for MFE + CAI mode, integer 3 for lambda swipe mode 
 lambda: lambda value for MFE + CAI mode or lambda swipe mode 
 incr: increment interval for lambda swipe mode 
 swipe: swipe output csv file name 
 g: minimal gap allowed in Nussinov based model 
+k: beam width for BeamZuker model (default=10)
 rna: input rna file path for eval model
+tau1: threshold tau1 for lambda sweep mode
+tau2: threshold tau2 for lambda sweep mode
+codon_file: codon usage table file path
+param_path: directory to energy parameters
 ```
 
 <a name="example"></a>

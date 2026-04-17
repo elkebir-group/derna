@@ -174,6 +174,22 @@ public:
      * */
     void get_rna_cai(string & rna);
 
+    /**
+     * Return table-stored MFE for the best O entry (same scaling as PBZ get_final_mfe).
+     * Stored Z2 = lambda * raw_MFE, so return Z2[best] / lambda.
+     */
+    double get_final_mfe(double lambda) const;
+
+    /**
+     * Return table-stored CAI for the best O entry (same scaling as PBZ get_final_cai).
+     * Stored Z_CAI = (lambda-1) * cai_sum, so return Z_CAI[best] / (lambda-1). Returns 0 if lambda >= 1.
+     */
+    double get_final_cai(double lambda) const;
+
+    /** Best codon indices at position 0 and n-1 (set after calculate_CAI_O). For n78 vs PBZ comparison. */
+    int get_minX() const { return minX; }
+    int get_minY() const { return minY; }
+
 //    int fill_rna(int i);
 
     int fill_rna(int i, const vector<int>& banned = {});
@@ -351,61 +367,15 @@ public:
 
     double hairpin_beam(double lambda, int l,int a, int b, int pa, int pb, int pna, int ppb, int n_codon_an, int n_codon_bp, int xi, int yj, int i, int j, int x, int y);
 
-private:
-    /**
-     * Return folding energy of hairpin loop structure
-     *
-     * @param xi  paired left end nucleotide of the hairpin
-     * @param yj  paired right end nucleotide of the hairpin
-     * @param xi_ the first unpaired left nucleotide in the loop
-     * @param _yj the first unpaired right nucleotide in the loop
-     * @param l   loop length
-     * @param fout ostream object for stdout
-     * @return folding energy of hairpin loop structure
-     */
+    /** Energy helpers (used by PositionBeamDP and PositionBasedBeamZuker) */
     static inline int hairpin_loop(int xi, int yj, int xi_, int _yj, int l);
-
-    /**
-     * Return folding energy of Coaxial Stacking
-     *
-     * @param i paired bottom left end nucleotide of the stacking
-     * @param j paired bottom right end nucleotide of the stacking
-     * @param i1 paired top left end nucleotide of the stacking
-     * @param j1 paired top right end nucleotide of the stacking
-     * @return folding energy of Coaxial Stacking
-     */
     static inline int stacking(int i, int j, int i1, int j1);
-
-    /**
-     * Return folding energy of Bulge Loops
-     *
-     * @param i paired bottom left end nucleotide of the bulge loop
-     * @param j paired bottom right end nucleotide of the bulge loop
-     * @param h paired top left end nucleotide of the bulge loop
-     * @param k paired top right end nucleotide of the bulge loop
-     * @param l loop length
-     * @return folding energy of Bulge Loops
-     */
     static inline int bulge_loop(int i, int j, int h, int k, int l);
-
-    /**
-     * Return folding energy of Internal Loops
-     * @param i paired bottom left end nucleotide of the bulge loop
-     * @param j paired bottom right end nucleotide of the bulge loop
-     * @param h paired top left end nucleotide of the bulge loop
-     * @param k paired top right end nucleotide of the bulge loop
-     * @param i1 the first unpaired bottom left nucleotide in the loop
-     * @param j1 the first unpaired bottom right nucleotide in the loop
-     * @param h1 the first unpaired top left nucleotide in the loop
-     * @param k1 the first unpaired top right nucleotide in the loop
-     * @param n1 left loop length
-     * @param n2 right loop length
-     * @param fout ostream object for stdout
-     * @return folding energy of Internal Loops
-     */
     static inline int interior_loop(int i, int j, int h, int k, int i1, int j1, int h1, int k1, int n1, int n2);
+    // i_left/j_right: position-in-codon (0,1,2) for closing bases; only add that codon's CAI when ==2. Use -1 for legacy "always add".
+    double add_hairpin_CAI_2(int a, int b, int x, int y, int a1=-1, int x1=-1, int b1=-1, int y1=-1, int i_left=-1, int j_right=-1) const;
 
-
+private:
     inline int Access_basepair(int, int);
 
     /**
@@ -557,9 +527,7 @@ private:
      * @return codon adaptation index compensation for hairpin structure
      */
 
-    double add_hairpin_CAI_2(int a, int b,  int x, int y, int a1=-1, int x1=-1,int b1 = -1, int y1 = -1) const;
-
-    double add_hairpin_CAI_8(int a, int b,  int x, int y, int a1=-1, int x1=-1,int b1 = -1, int y1 = -1) const;
+    double add_hairpin_CAI_8(int a, int b,  int x, int y, int a1=-1, int x1=-1,int b1 = -1, int y1 = -1, int i_left=-1, int j_right=-1) const;
 
     double add_hairpin_CAI_3(vector<int> & s, int ) const;
 
@@ -598,6 +566,26 @@ private:
 
     void helper_E(int a, int b, int i, int j, int x, int y, double lambda, priority_queue<BeamEntry> &curr_beam);
     void helper_O(int a, int b, int i, int j, int x, int y, double lambda, priority_queue<BeamEntry> &curr_beam);
+    
+public:
+    // Dump tables for comparison
+    void dump_O_table(ostream& fout);
+    void dump_E_table(ostream& fout);
+    void dump_Z2_table(ostream& fout);
+    void dump_E2_table(ostream& fout);
+    
+    // Accessor methods for comparison
+    inline const vector<double>& get_E1_table() const { return E1; }
+    inline int get_n() const { return n; }
+    inline const vector<int>& get_protein() const { return protein; }
+    inline int sigma(int a, int i) const { return 3*a+i; }
+
+    // Public wrapper around private hairpin_special_CAI for use by PositionBeamDP.
+    inline tuple<double, double, double, vector<int>> hairpin_special_CAI_pub(
+        double lambda, int l, int a, int b, int pa, int pb, int pna, int ppb,
+        int x1, int y1, int xi, int xi_, int _yj, int yj, int x, int y, int i, int j) {
+        return hairpin_special_CAI(lambda, l, a, b, pa, pb, pna, ppb, x1, y1, xi, xi_, _yj, yj, x, y, i, j);
+    }
 };
 
 inline int Zuker::ava_nucleotides_int(int a, int x, int i, int dir) {

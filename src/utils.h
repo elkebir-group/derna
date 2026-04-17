@@ -29,7 +29,10 @@ int n_index2(int n1, int n2);
 
 bool complementary(int X, int Y);
 
-int sigma(int a, int i);
+static inline constexpr int sigma(int a, int i)
+{
+    return 3*a+i;
+}
 
 double getCAI(const vector<int> &, const vector<int> &);
 
@@ -86,6 +89,10 @@ double evaluate_MFE(string &);
 double evaluate_MFE(vector<int> &, string & bp);
 
 int evaluate_BP_N(string &, int);
+
+// Evaluate the MFE of a GIVEN (RNA, dot-bracket structure) pair using Turner energy tables.
+// Returns energy in cKcal (centikilo-calories, i.e. 10*kcal/mol, matching Zuker convention).
+double evaluate_structure_energy(const std::vector<int>& seq, const std::string& bp_str);
 
 void usage();
 void help();

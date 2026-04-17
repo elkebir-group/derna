@@ -1299,6 +1299,10 @@ PUBLIC int int22[NBPAIRS+1][NBPAIRS+1][5][5][5][5];
 PUBLIC int ML_BASE;
 PUBLIC int ML_closing;
 PUBLIC int ML_intern;
+int E_MLstem(int tt) {
+    if (tt <= 0 || tt > NBPAIRS) return ML_intern;
+    return ML_intern;  /* TODO: pair-type-dependent table to match LCDSfold */
+}
 PUBLIC int ninio;
 PUBLIC int TerminalAU;
 PUBLIC int Tetraloop[16];
@@ -1622,7 +1626,7 @@ void fill_codon(const string &filename, char delimeter) {
             };
             if (idx == 0) {
                 cidx = aa_index(word[0]);
-            } else if (idx - 1 < codons.size()) {
+            } else if ((size_t)(idx - 1) < codons.size()) {
                 vector<int> numeric_codon(3);
                 for (int i = 0; i < 3; i++) {
                     numeric_codon[i] = n_index(codons[idx-1][i]);

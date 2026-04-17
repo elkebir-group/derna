@@ -17,10 +17,18 @@
 #include <cassert>
 #include <algorithm>
 #include <sstream>
+#include <iomanip>
 #include "params/constants.h"
 
 using namespace std;
 
+// Debug logging: off by default. Build with -DDEBUG_ZUKER_LOGGING to enable.
+// All debug checks and logs are wrapped in #ifdef DEBUG_ZUKER_LOGGING ... #endif.
+// #ifdef DEBUG_ZUKER_LOGGING
+// static ostringstream& get_zuker_debug_stream() { static ostringstream s; return s; }
+// #  define open_debug_file()  do {} while(0)
+// #  define debug_file         get_zuker_debug_stream()
+// #endif
 
 Zuker::Zuker(int n, int mode, vector<int> & protein, int k):protein(protein),n(n), k(k) {
     start_index.resize(n*n, 0);
@@ -789,7 +797,7 @@ int Zuker::hairpin(int la, int lb, int l, int pa, int pb, int pna, int ppb, int 
 }
 
 
-tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lambda, int l, int a, int b, int pa, int pb, int pna, int ppb, int x1, int y1, int xi, int xi_, int _yj, int yj, int x, int y, int i, int j) {
+tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lambda, int l, int a, int b, int pa, int pb, int pna, int ppb, int x1, int y1, int xi, int xi_, int _yj, int yj, int x, int y, int i, [[maybe_unused]] int j) {
     string s;
     double temp_mfe, temp_cai;
     double hairpin_energy = inf, mfe = inf, cai = inf, temp_e = inf;
@@ -1086,6 +1094,52 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
             E_bt[idx] = temp_p;
             E2[idx] = mfe;
             E_CAI[idx] = cai;
+            
+// #ifdef DEBUG_ZUKER_LOGGING
+//             // DEBUG: Trace E2(2,3,1,0) = E(7,9) for test_5aa chain
+//             if (a == 2 && b == 3 && i == 1 && j == 0) {
+//                 open_debug_file();
+//                 debug_file << "Zuker E2(2,3,1,0) E(7,9) from HAIRPIN: mfe=" << mfe << ", cai=" << cai << ", x=" << x << ", y=" << y << endl;
+//             }
+//             // DEBUG: Trace E2(0,4,2,2) for test_5aa segment (li=2, rj=14)
+//             if (a == 0 && b == 4 && i == 2 && j == 2) {
+//                 open_debug_file();
+//                 debug_file << "Zuker E2(0,4,2,2) from HAIRPIN: mfe=" << mfe << ", cai=" << cai << ", E1=" << hairpin_energy << ", x=" << x << ", y=" << y << endl;
+//             }
+//             // DEBUG: Trace E2(5,29) for 10aa (a=1,b=9,i=2,j=2)
+//             if (n == 10 && a == 1 && b == 9 && i == 2 && j == 2) {
+//                 open_debug_file();
+//                 debug_file << "Zuker E2(5,29) from HAIRPIN: mfe=" << mfe << ", E1=" << hairpin_energy << ", x=" << x << ", y=" << y << endl;
+//             }
+//             // DEBUG 10aa: trace E2(1,6,2,1)=E(5,19) when set from HAIRPIN
+//             if (n == 10 && a == 1 && b == 6 && i == 2 && j == 1) {
+//                 open_debug_file();
+//                 debug_file << "Zuker E2(1,6,2,1) E(5,19) from HAIRPIN: mfe=" << mfe << ", E1=" << hairpin_energy << ", x=" << x << ", y=" << y << endl;
+//             }
+//             // DEBUG 10aa: trace E2(2,5,1,2)=E(7,17) when set from HAIRPIN
+//             if (n == 10 && a == 2 && b == 5 && i == 1 && j == 2) {
+//                 open_debug_file();
+//                 debug_file << "Zuker E2(2,5,1,2) E(7,17) from HAIRPIN: mfe=" << mfe << ", E1=" << hairpin_energy << ", x=" << x << ", y=" << y << endl;
+//             }
+//             // DEBUG 10aa: trace E2(2,5,2,1)=E(8,16) when set from HAIRPIN (inner that gives E(7,17)=340)
+//             if (n == 10 && a == 2 && b == 5 && i == 2 && j == 1) {
+//                 open_debug_file();
+//                 debug_file << "Zuker E2(2,5,2,1) E(8,16) from HAIRPIN: mfe=" << mfe << ", E1=" << hairpin_energy << ", x=" << x << ", y=" << y << endl;
+//             }
+//             // DEBUG 10aa: trace E2(3,5,0,0)=E(9,15) when set from HAIRPIN (inner that gives E(8,16)=820)
+//             if (n == 10 && a == 3 && b == 5 && i == 0 && j == 0) {
+//                 open_debug_file();
+//                 debug_file << "Zuker E2(3,5,0,0) E(9,15) from HAIRPIN: mfe=" << mfe << ", E1=" << hairpin_energy << ", x=" << x << ", y=" << y << endl;
+//             }
+//             // DEBUG: Track ALL E2 values for test case
+//             static int e_debug_all = 0;
+//             if (a == 0 && b <= 4 && e_debug_all++ < 20) {
+//                 open_debug_file();
+//                 debug_file << "DEBUG Zuker E2[" << a << "," << b << "," << i << "," << j << "," << x << "," << y 
+//                      << "]: E1=" << E1[idx] << ", E2(mfe)=" << mfe << ", cai=" << cai 
+//                      << ", hairpin_energy=" << hairpin_energy << ", E2[idx]=" << E2[idx] << endl;
+//             }
+// #endif
         }
     }
 
@@ -1248,7 +1302,7 @@ int Zuker::internal(int a, int b, int i, int j, int x, int y, int la, int lb, in
     return internal_energy;
 }
 
-double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int y, int la, int lb, int xi, int yj, bool beam) {
+double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int y, int la, int lb, int xi, int yj, [[maybe_unused]] bool beam) {
     double internal_energy = inf, energy = inf;
     double mfe2, cai2, mfe, cai;
     int t = 0;
@@ -1816,7 +1870,81 @@ double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int 
                         E_bt[idx_m] = temp;
                         mfe2 = Access_E2(c,d,i1,j1,xh,xk) + mfe;
                         cai2 = E_CAI[index(c,d,i1,j1,xh,xk)] + cai;
-
+// #ifdef DEBUG_ZUKER_LOGGING
+//                         // DEBUG: Trace E2(5,29) INTERNAL inner (bifurcation) for 10aa
+//                         if (n == 10 && a == 1 && b == 9 && i == 2 && j == 2) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(5,29) INTERNAL inner: lc=" << lc << ", ld=" << ld
+//                                  << " (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << endl;
+//                         }
+//                         // DEBUG: Trace inner segment for E2(0,4,2,2) and E2(1,4,0,1) (test_5aa)
+//                         if (a == 0 && b == 4 && i == 2 && j == 2) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(0,4,2,2) INTERNAL inner: lc=" << lc << ", ld=" << ld
+//                                  << " (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << ", xh=" << xh << ", xk=" << xk << endl;
+//                         }
+//                         if (a == 1 && b == 4 && i == 0 && j == 1) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(1,4,0,1) INTERNAL inner: lc=" << lc << ", ld=" << ld
+//                                  << " (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << ", xh=" << xh << ", xk=" << xk << endl;
+//                         }
+//                         // DEBUG 10aa: trace E2(1,6,1,2) = E(4,20) when we get negative mfe2
+//                         if (n == 10 && a == 1 && b == 6 && i == 1 && j == 2 && mfe2 < 0) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(1,6,1,2) INTERNAL: lc=" << lc << ", ld=" << ld
+//                                  << " (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << endl;
+//                             debug_file.flush();
+//                         }
+//                         // DEBUG 10aa: trace E2(3,5,0,0)=E(9,15) INTERNAL inner that gives mfe2=1000
+//                         if (n == 10 && a == 3 && b == 5 && i == 0 && j == 0) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(3,5,0,0) E(9,15) INTERNAL inner: lc=" << lc << " ld=" << ld
+//                                  << " (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << " xh=" << xh << " xk=" << xk << endl;
+//                         }
+//                         // DEBUG 10aa: trace E2(2,5,2,1)=E(8,16) INTERNAL inner that gives mfe2=820
+//                         if (n == 10 && a == 2 && b == 5 && i == 2 && j == 1) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(2,5,2,1) E(8,16) INTERNAL inner: lc=" << lc << " ld=" << ld
+//                                  << " (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << " xh=" << xh << " xk=" << xk << endl;
+//                         }
+//                         // DEBUG 10aa: trace E2(2,5,1,2)=E(7,17) INTERNAL inner that improves mfe2 (find source of 340)
+//                         if (n == 10 && a == 2 && b == 5 && i == 1 && j == 2) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(2,5,1,2) E(7,17) INTERNAL inner: lc=" << lc << " ld=" << ld
+//                                  << " (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << " xh=" << xh << " xk=" << xk << endl;
+//                         }
+//                         // DEBUG 10aa: trace E2(1,6,2,1)=E(5,19) inner that gives mfe2=60; log 8 bases to compare with PBZ
+//                         if (n == 10 && a == 1 && b == 6 && i == 2 && j == 1) {
+//                             open_debug_file();
+//                             double inner_E2 = Access_E2(c,d,i1,j1,xh,xk);
+//                             debug_file << "Zuker E2(1,6,2,1) E(5,19) INTERNAL inner: (c,d,i1,j1)=(" << c << "," << d << "," << i1 << "," << j1 << ")"
+//                                  << " lc=" << lc << " ld=" << ld << " inner_E2=" << inner_E2 << ", loop_mfe=" << mfe << ", mfe2=" << mfe2 << endl;
+//                             if (mfe2 == 60) {
+//                                 int nuc8_direct = (c < n && 2 < n_codon[protein[c]]) ? nucleotides[protein[c]][xh][2] : -1;
+//                                 int nuc16_direct = (d < n && 1 < n_codon[protein[d]]) ? nucleotides[protein[d]][xk][1] : -1;
+//                                 debug_file << "Zuker E2(1,6,2,1) 8bases: xi=" << xi << " yj=" << yj << " hi=" << hi << " kj=" << kj
+//                                      << " xi_=" << xi_ << " _yj=" << _yj << " _hi=" << _hi << " kj_=" << kj_
+//                                      << " x=" << x << " y=" << y << " xh=" << xh << " xk=" << xk << " ll=" << ll << " lr=" << lr << endl;
+//                                 debug_file << "Zuker E2(1,6,2,1) direct: (c,d,xh,xk)=(" << c << "," << d << "," << xh << "," << xk
+//                                      << ") nuc8_direct=nucleotides[protein[" << c << "]][xh][2]=" << nuc8_direct
+//                                      << " nuc16_direct=nucleotides[protein[" << d << "]][xk][1]=" << nuc16_direct << endl;
+//                             }
+//                         }
+// #endif
                     }
 
                 }
@@ -1828,6 +1956,49 @@ double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int 
         E1[idx_m] = internal_energy;
         E2[idx_m] = mfe2;
         E_CAI[idx_m] = cai2;
+// #ifdef DEBUG_ZUKER_LOGGING
+//         // DEBUG 10aa: trace E2(1,6,1,2) = E(4,20) when set to negative
+//         if (n == 10 && a == 1 && b == 6 && i == 1 && j == 2 && mfe2 < 0) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(1,6,1,2) from INTERNAL: mfe2=" << mfe2 << ", E1=" << internal_energy << ", x=" << x << ", y=" << y << endl;
+//             debug_file.flush();
+//         }
+//         // DEBUG 10aa: trace E2(1,6,2,1)=E(5,19) when set from INTERNAL
+//         if (n == 10 && a == 1 && b == 6 && i == 2 && j == 1) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(1,6,2,1) E(5,19) from INTERNAL: mfe2=" << mfe2 << ", E1=" << internal_energy << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG 10aa: trace E2(2,5,1,2)=E(7,17) when set from INTERNAL
+//         if (n == 10 && a == 2 && b == 5 && i == 1 && j == 2) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(2,5,1,2) E(7,17) from INTERNAL: mfe2=" << mfe2 << ", E1=" << internal_energy << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG 10aa: trace E2(2,5,2,1)=E(8,16) when set from INTERNAL
+//         if (n == 10 && a == 2 && b == 5 && i == 2 && j == 1) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(2,5,2,1) E(8,16) from INTERNAL: mfe2=" << mfe2 << ", E1=" << internal_energy << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG 10aa: trace E2(3,5,0,0)=E(9,15) when set from INTERNAL
+//         if (n == 10 && a == 3 && b == 5 && i == 0 && j == 0) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(3,5,0,0) E(9,15) from INTERNAL: mfe2=" << mfe2 << ", E1=" << internal_energy << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG: Trace E2(1,4,0,1) for segment (3,13)
+//         if (a == 1 && b == 4 && i == 0 && j == 1) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(1,4,0,1) from INTERNAL: mfe2=" << mfe2 << ", cai2=" << cai2 << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG: Trace E2(0,4,2,2) for test_5aa segment (li=2, rj=14)
+//         if (a == 0 && b == 4 && i == 2 && j == 2) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(0,4,2,2) from INTERNAL: mfe2=" << mfe2 << ", cai2=" << cai2 << ", E1=" << internal_energy << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG: Trace E2(5,29) for 10aa (a=1,b=9,i=2,j=2)
+//         if (n == 10 && a == 1 && b == 9 && i == 2 && j == 2) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(5,29) from INTERNAL: mfe2=" << mfe2 << ", E1=" << internal_energy << ", x=" << x << ", y=" << y << endl;
+//         }
+// #endif
     }
 
 
@@ -1897,7 +2068,7 @@ int Zuker::multi_loop(int a, int b, int i, int j, int x, int y, int pa, int pb, 
     return multi_loop;
 }
 
-double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, int y, int pa, int pb, int n_codon_an, int n_codon_bp, bool beam) {
+double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, int y, int pa, int pb, int n_codon_an, int n_codon_bp, [[maybe_unused]] bool beam) {
     double multi_loop = inf;
     double temp_e;
     double mfe, cai;
@@ -1956,8 +2127,31 @@ double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, in
 
     E_bt[index(a,b,i,j,x,y)] = temp;
     if (multi_loop < E1[index(a,b,i,j,x,y)]) {
-        E2[index(a,b,i,j,x,y)] = mfe + lambda*(AU[nucleotides[pa][x][i]][nucleotides[pb][y][j]] + ML_closing + ML_intern);
+        double e2_val = mfe + lambda*(AU[nucleotides[pa][x][i]][nucleotides[pb][y][j]] + ML_closing + ML_intern);
+        E2[index(a,b,i,j,x,y)] = e2_val;
         E_CAI[index(a,b,i,j,x,y)] = cai;
+// #ifdef DEBUG_ZUKER_LOGGING
+//         // DEBUG: Trace E2(0,4,2,2) for test_5aa segment (li=2, rj=14)
+//         if (a == 0 && b == 4 && i == 2 && j == 2) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(0,4,2,2) from MULTILOOP: mfe=" << mfe << ", e2_val=" << e2_val << ", cai=" << cai << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG: Trace E2(5,29) for 10aa (a=1,b=9,i=2,j=2)
+//         if (n == 10 && a == 1 && b == 9 && i == 2 && j == 2) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(5,29) from MULTILOOP: e2_val=" << e2_val << ", mfe=" << mfe << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG 10aa: trace E2(1,6,2,1)=E(5,19) when set from MULTILOOP
+//         if (n == 10 && a == 1 && b == 6 && i == 2 && j == 1) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(1,6,2,1) E(5,19) from MULTILOOP: e2_val=" << e2_val << ", mfe=" << mfe << ", x=" << x << ", y=" << y << endl;
+//         }
+//         // DEBUG 10aa: trace E2(2,5,1,2)=E(7,17) when set from MULTILOOP
+//         if (n == 10 && a == 2 && b == 5 && i == 1 && j == 2) {
+//             open_debug_file();
+//             debug_file << "Zuker E2(2,5,1,2) E(7,17) from MULTILOOP: e2_val=" << e2_val << ", mfe=" << mfe << ", x=" << x << ", y=" << y << endl;
+//         }
+// #endif
     }
     return multi_loop;
 }
@@ -3133,7 +3327,7 @@ void Zuker::traceback_B() {
                                 } else {
                                     vector<int> chars_at_i;
                                     for (const auto& s : candidates) {
-                                        if (ix < s.size()) {
+                                        if ((size_t)ix < s.size()) {
                                             chars_at_i.push_back(to_int(s[ix]));
                                         }
                                     }
@@ -3517,7 +3711,7 @@ void Zuker::traceback_B2(double lambda) {
     int s = 0;
     int t = 0;
     int bt = 0;
-    double oij, oi, eij;
+    double oij, eij;
     int c,d,i1,j1,hx,ky;
     sector[++s].a = 0;
     sector[s].b = n-1;
@@ -3569,26 +3763,22 @@ void Zuker::traceback_B2(double lambda) {
         }
 
         if (ml == 0) {
-            double energy;
             bt = Access_OB(idx);
             oij = Access_O(a,b,i,j,x,y);
             switch (bt) {
                 int kj; //c1, i1_
                 case -1:
-                    oi = Access_E1(a,b,i,j,x,y) + lambda*AU[xi][yj];
                     bp_bond[++t].i = sigma(a,i);
                     bp_bond[t].j   = sigma(b,j);
                     goto repeat;
                     break;
                 case -2:
-                    oi = Access_O(a,b,i,j-1,x,y);
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i, sector[s].j = j-1, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
                     goto OUTLOOP;
                     break;
                 case -3:
                     kj = O_bt[idx][0];
-                    energy = Access_O(a,b-1,i,2,x,kj) + (lambda-1)*codon_cai[pb][y];
 
                     sector[++s].a = a;
                     sector[s].b = b - 1, sector[s].i = i, sector[s].j = 2, sector[s].x = x, sector[s].y = kj, sector[s].ml = ml;
@@ -3599,11 +3789,6 @@ void Zuker::traceback_B2(double lambda) {
                 case -4:
                     int al, il, xl, br, jr, yr, hi;
                     al = O_bt[idx][0], il = O_bt[idx][1], xl = O_bt[idx][2], br = O_bt[idx][3], jr = O_bt[idx][4],yr = O_bt[idx][5], hi = O_bt[idx][6];
-                    if (jr >= 1) {
-                        energy = Access_O(a,al,i,il,x,xl) + Access_E1(br,b,jr,j,yr,y) - (lambda-1)*codon_cai[protein[al]][xl] + lambda * AU[hi][yj];
-                    } else {
-                        energy = Access_O(a,al,i,il,x,xl) + Access_E1(br,b,jr,j,yr,y) + lambda * AU[hi][yj];
-                    }
 
                     sector[++s].a = a;
                     sector[s].i = i, sector[s].b = al, sector[s].j = il, sector[s].x = x, sector[s].y = xl, sector[s].ml = 0;
@@ -3629,27 +3814,23 @@ void Zuker::traceback_B2(double lambda) {
             switch (bt) {
                 int hi, kj;
                 int c1, i1_;
-                double energy;
                 case -1:
                     bp_bond[++t].i = sigma(a, i);
                     bp_bond[t].j = sigma(b, j);
                     goto repeat;
                     break;
                 case -2:
-                    oi = Access_M1(a, b, i + 1, j, x, y) + lambda * ML_BASE;
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i+1, sector[s].j = j, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
                     goto OUTLOOP;
                     break;
                 case -3:
                     hi = M_bt[idx][0];
-                    energy = Access_M1(a + 1, b, 0, j, hi, y) + (lambda-1) * codon_cai[pa][x] + lambda * ML_BASE;
                     sector[++s].a = a + 1;
                     sector[s].b = b, sector[s].i = 0, sector[s].j = j, sector[s].x = hi, sector[s].y = y, sector[s].ml = ml;
                     goto OUTLOOP;
                     break;
                 case -4:
-                    oi = Access_M1(a,b,i,j-1,x,y) + lambda * ML_BASE;
                     sector[++s].a = a;
                     sector[s].b = b, sector[s].i = i, sector[s].j = j-1, sector[s].x = x, sector[s].y = y, sector[s].ml = ml;
 
@@ -3657,7 +3838,6 @@ void Zuker::traceback_B2(double lambda) {
                     break;
                 case -5:
                     kj = M_bt[idx][0];
-                    energy = Access_M1(a,b-1,i,2,x,kj) + (lambda-1)*codon_cai[pb][y] + lambda * ML_BASE;
                     sector[++s].a = a;
                     sector[s].b = b - 1, sector[s].i = i, sector[s].j = 2, sector[s].x = x, sector[s].y = kj, sector[s].ml = ml;
 
@@ -3667,11 +3847,6 @@ void Zuker::traceback_B2(double lambda) {
                 case -6:
 
                     c = M_bt[idx][0], i1 =M_bt[idx][1], hi = M_bt[idx][2], c1 = M_bt[idx][3], i1_ = M_bt[idx][4], kj = M_bt[idx][5];
-                    if (i1_ >= 1) {
-                        energy = Access_M1(a, c, i, i1, x, hi) + Access_M1(c1, b, i1_, j, kj, y) - (lambda-1) * codon_cai[protein[c]][kj];
-                    } else {
-                        energy = Access_M1(a, c, i, i1, x, hi) + Access_M1(c1, b, i1_, j, kj, y);
-                    }
 
                     sector[++s].a = a;
                     sector[s].i = i, sector[s].b = c, sector[s].j = i1, sector[s].x = x, sector[s].y = hi, sector[s].ml = ml;
@@ -3822,6 +3997,8 @@ void Zuker::traceback_B2(double lambda) {
                             break;
                     }
 
+                    (void)hairpin;
+                    (void)cai;
                     assign(nucle_seq,nuc,li+1);
                     goto OUTLOOP;
                 } else {
@@ -3860,7 +4037,7 @@ void Zuker::traceback_B2(double lambda) {
                                 } else {
                                     vector<int> chars_at_i;
                                     for (const auto& s : candidates) {
-                                        if (ix < s.size()) {
+                                        if ((size_t)ix < s.size()) {
                                             chars_at_i.push_back(to_int(s[ix]));
                                         }
                                     }
@@ -3883,21 +4060,12 @@ void Zuker::traceback_B2(double lambda) {
             case -3:
 
                 sector[s+1].ml = sector[s+2].ml = 1;
-                double en;
-                en = eij - lambda*(AU[xi][yj] + ML_intern + ML_closing);
                 int t_idx;
                 int sa,sb,si,sj,sx,sy,sh,sk;
 
 
                 sa = E_bt[idx][0], sb = E_bt[idx][1], si = E_bt[idx][2], sj = E_bt[idx][3], sx = E_bt[idx][4], sy = E_bt[idx][5];
 
-                if (i == 2 && j == 0) {
-                    en -= ((lambda-1)*(codon_cai[pa][x] + codon_cai[pb][y]));
-                } else if (i == 2) {
-                    en -= (lambda-1)*codon_cai[pa][x];
-                } else if (j == 0) {
-                    en -= (lambda-1)*codon_cai[pb][y];
-                }
                 t_idx = index(sa,sb,si,sj,sx,sy);
 
 
@@ -4005,9 +4173,8 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_OB_options(
     int xi = nucleotides[pa][x][i];
     int yj = nucleotides[pb][y][j];
     int idx = index(a, b, i, j, x, y);
-    int ix = -1;
 
-    double mfe = Z2[idx], en = O[index(0, n - 1, 0, 2, minX, minY)];
+    double en = O[index(0, n - 1, 0, 2, minX, minY)];
     double t_mfe, d_mfe, t_cai;
 
     // Option -1: base pair, structure change
@@ -4042,7 +4209,6 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_OB_options(
     }
 
     // Option -4: bifurcation cases, mixed
-    double min_mfe = inf;
     for (int lc = li + 1; lc <= rj - 4; ++lc) {
         int c = lc / 3;
         int i1 = lc % 3;
@@ -4142,7 +4308,7 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_OB_options(
         }
     }
 
-    auto it = std::find_if(options.begin(), options.end(),
+    [[maybe_unused]] auto it = std::find_if(options.begin(), options.end(),
                            [&opt](const tuple<int, double, double, double, vector<int>>& elem) {
                                return std::get<0>(elem) == std::get<0>(opt) &&
                                       std::abs(std::get<1>(elem) - std::get<1>(opt)) < EPSILON &&
@@ -4201,10 +4367,9 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_MB_options(
     int pb = protein[b];
     int xi = nucleotides[pa][x][i];
     int yj = nucleotides[pb][y][j];
-    int ix = -1;
     int type = BP_pair[xi+1][yj+1];
 
-    double mfe = M2[idx], en = O[index(0, n - 1, 0, 2, minX, minY)];
+    double en = O[index(0, n - 1, 0, 2, minX, minY)];
     double t_mfe, d_mfe;
 
     // structure
@@ -4345,7 +4510,7 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_MB_options(
         }
     }
 
-    auto it = std::find_if(options.begin(), options.end(),
+    [[maybe_unused]] auto it = std::find_if(options.begin(), options.end(),
                            [&opt](const tuple<int, double, double, double, vector<int>>& elem) {
                                return std::get<0>(elem) == std::get<0>(opt) &&
                                       std::abs(std::get<1>(elem) - std::get<1>(opt)) < EPSILON &&
@@ -4401,11 +4566,8 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_EB_options(
     int yj = nucleotides[pb][y][j];
     int pna = protein[a + 1];
     int ppb = protein[b - 1];
-    const int n_codon_a = n_codon[pa];
-    const int n_codon_b = n_codon[pb];
     int n_codon_an = n_codon[pna];
     const int n_codon_bp = n_codon[ppb];
-    int type = BP_pair[xi+1][yj+1];
 
     int la = sigma(a,i);
     int lb = sigma(b,j);
@@ -4415,9 +4577,7 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_EB_options(
     double temp_mfe, temp_cai, temp_e;
     vector<int> temp, temp11;
 
-    double mfe = E2[idx], en = O[index(0, n - 1, 0, 2, minX, minY)];
-
-    double min_hairpin = inf, min_internal = inf;
+    double en = O[index(0, n - 1, 0, 2, minX, minY)];
     // mixed
     if (i == 2 && j == 0) {
         for (int x1 = 0; x1 < n_codon_an; ++x1) {
@@ -4579,8 +4739,6 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_EB_options(
                     const int n_codon_pc = (ppc >= 0 && ppc < safe_n_codon) ? n_codon[ppc] : 0;
                     n_codon_an = (pna >= 0 && pna < safe_n_codon) ? n_codon[pna] : 0;
                     const int n_codon_pb = (ppb >= 0 && ppb < safe_n_codon) ? n_codon[ppb] : 0;
-
-                    double p_mfe = Access_E2(c,d,i1,j1,xh,xk);
 
                     // mixed
                     if (ll == 1 && lr == 1) {
@@ -5287,6 +5445,7 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_EB_options(
                             break;
                     }
 
+                    (void)cai;
                     opt = {-1, energy, energy, hairpin, E_bt[idx]};
                 } else {
                     l = values[0], xi_ = values[2], _yj = values[3], a1 = values[5], x1 = values[6] , b1 = values[7], y1 = values[8];
@@ -5309,14 +5468,14 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_EB_options(
                 break;
             }
             case -4: {
-                int c = E_bt[idx][0], d = E_bt[idx][1], i1 = E_bt[idx][2], j1 = E_bt[idx][3], hx = E_bt[idx][4], ky = E_bt[idx][5], hi = E_bt[idx][6], kj = E_bt[idx][7];
+                int c = E_bt[idx][0], d = E_bt[idx][1], hi = E_bt[idx][6], kj = E_bt[idx][7];
                 temp_mfe = lambda*stacking(xi,yj,hi,kj);
                 temp_cai = (lambda-1)*(add_CAI(a,c,x) + add_CAI(b,d,y));
                 opt = {-4, energy, temp_mfe + temp_cai, temp_mfe, E_bt[idx]};
                 break;
             }
             case -5: {
-                int c = E_bt[idx][0], d = E_bt[idx][1], i1 = E_bt[idx][2], j1 = E_bt[idx][3], hx = E_bt[idx][4], ky = E_bt[idx][5], hi = E_bt[idx][6], kj = E_bt[idx][7], ll = E_bt[idx][8];
+                int c = E_bt[idx][0], d = E_bt[idx][1], hi = E_bt[idx][6], kj = E_bt[idx][7], ll = E_bt[idx][8];
                 temp_mfe = lambda*bulge_loop(xi,yj,hi,kj,ll);
                 temp_cai = (lambda-1)*(add_CAI(a,c,x) + add_CAI(b,d,y));
                 opt = {-5, energy, temp_mfe + temp_cai, temp_mfe, E_bt[idx]};
@@ -5342,7 +5501,7 @@ vector<tuple<int, double, double, double, vector<int>>> Zuker::build_EB_options(
         }
     }
 
-    auto it = std::find_if(options.begin(), options.end(),
+    [[maybe_unused]] auto it = std::find_if(options.begin(), options.end(),
                            [&opt](const tuple<int, double, double, double, vector<int>>& elem) {
                                return std::get<0>(elem) == std::get<0>(opt) &&
                                       std::abs(std::get<1>(elem) - std::get<1>(opt)) < EPSILON &&
@@ -5482,7 +5641,7 @@ tuple<int, double, vector<int>> Zuker::softmax_sample(
     return options.back();
 }
 
-void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, double min_gamma) {
+void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, [[maybe_unused]] double min_gamma) {
     nucle_seq.clear(), sector.clear(), bp_bond.clear(), codon_selection.clear();
     sector.resize(3*n);
     bp_bond.resize(3*n);
@@ -5513,7 +5672,6 @@ void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, doub
         int rj = sigma(b, j);
         int xi = nucleotides[pa][x][i];
         int yj = nucleotides[pb][y][j];
-        int idx = index(a, b, i, j, x, y);
 
         if (a == b && i == j) {
 //            cout << "size: " << sector.size() << endl;
@@ -5530,7 +5688,6 @@ void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, doub
 
         int bt;
         double en, d_en;
-        bool optimal = false;
 
         if (ml == 0) {
 //            cout << "ml: " << ml << " " << a << " " << b << " " << i << " " << j << " " << x << " " << y << endl;
@@ -5602,9 +5759,9 @@ void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, doub
                 case -6: {
                     c = bt_data[0], i1 = bt_data[1];
                     int hi = bt_data[2], c1 = bt_data[3], i1_ = bt_data[4], kj = bt_data[5];
-                    sector[++s] = {a, c, i, i1, x, hi, ml};
+                    sector[++s] = {a, c, i, i1, x, hi, ml, 0.0};
                     sector[s].change = change + Access_M1(c1, b, i1_, j, kj, y);
-                    sector[++s] = {c1, b, i1_, j, kj, y, ml};
+                    sector[++s] = {c1, b, i1_, j, kj, y, ml, 0.0};
                     sector[s].change = change + Access_M1(a, c, i, i1, x, hi);
                     goto OUTLOOP;
                     break;
@@ -5644,7 +5801,6 @@ void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, doub
                     int hi, kj, lc, ld, ll; //pc, pd, n_codon_c, n_codon_d, min_ld
                     int c1, i1_; //,d1, j1_
                     int xi_, _yj; // cx, cy
-                    double energy; //interior_energy, internal_energy
                     int l,a1,b1,x1,y1,a2,x2,b2,y2;
                     char xi1, xi2,xi3,yj3,yj2,yj1;
 
@@ -5760,9 +5916,9 @@ void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, doub
 
                         c = TM_bt[t_idx][0], i1 =TM_bt[t_idx][1], sh = TM_bt[t_idx][2], c1 = TM_bt[t_idx][3], i1_ = TM_bt[t_idx][4], sk = TM_bt[t_idx][5];
 
-                        sector[++s] = {sa, c, si, i1, sx, sh, ml};
+                        sector[++s] = {sa, c, si, i1, sx, sh, ml, 0.0};
                         sector[s].change = change + Access_M1(c1, sb, i1_, sj, sk, sy);
-                        sector[++s] = {c1, sb, i1_, sj, sk, sy, ml};
+                        sector[++s] = {c1, sb, i1_, sj, sk, sy, ml, 0.0};
                         sector[s].change = change + Access_M1(sa, c, si, i1, sx, sh);
                         break;
 
@@ -5797,12 +5953,10 @@ void Zuker::traceback_suboptimal(double lambda, double gamma, mt19937 &rng, doub
                     }
 
                     case -6: {
-                        int _hi, kj_, lr;
-                        int na,xa,cp,xc,bp,xb,nd,xd;
+                        int _hi, kj_;
 
                         c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3], hx = bt_data[4], ky = bt_data[5], hi = bt_data[6], kj = bt_data[7];
-                        xi_ = bt_data[8], _yj = bt_data[9], _hi = bt_data[10], kj_ = bt_data[11],  ll = bt_data[12], lr = bt_data[13];
-                        na = bt_data[14], xa = bt_data[15], cp = bt_data[16], xc = bt_data[17], bp = bt_data[18], xb = bt_data[19], nd = bt_data[20], xd = bt_data[21];
+                        xi_ = bt_data[8], _yj = bt_data[9], _hi = bt_data[10], kj_ = bt_data[11];
 
                         lc = sigma(c,i1), ld = sigma(d,j1);
 
@@ -5839,7 +5993,7 @@ void Zuker::load_path(const Path& path) {
 }
 
 void Zuker::traceback_enumerate_dfs(double lambda, double gamma, size_t max_num_paths,
-                                    vector<Path> &all_paths, double min_gamma) {
+                                    vector<Path> &all_paths, [[maybe_unused]] double min_gamma) {
     stack<Path> dfs_stack;
 
     // Initial path
@@ -5986,10 +6140,10 @@ void Zuker::traceback_enumerate_dfs(double lambda, double gamma, size_t max_num_
                         int c = bt_data[0], i1 = bt_data[1];
                         int hi = bt_data[2], c1 = bt_data[3], i1_ = bt_data[4], kj = bt_data[5];
 
-                        new_path.sector_stack.push_back({a, c, i, i1, x, hi, ml});
+                        new_path.sector_stack.push_back({a, c, i, i1, x, hi, ml, 0.0});
                         new_path.sector_stack.back().change = change + Access_M1(c1, b, i1_, j, kj, y);
 
-                        new_path.sector_stack.push_back({c1, b, i1_, j, kj, y, ml});
+                        new_path.sector_stack.push_back({c1, b, i1_, j, kj, y, ml, 0.0});
                         new_path.sector_stack.back().change = change + Access_M1(a, c, i, i1, x, hi);
 
                         break;
@@ -6021,7 +6175,8 @@ void Zuker::traceback_enumerate_dfs(double lambda, double gamma, size_t max_num_
 
                 switch (bt) {
                     case -1: {
-                        int l,a1,b1,x1,y1,a2,x2,b2,y2;
+                        int l,a2,x2,b2,y2;
+                        [[maybe_unused]] int a1,b1,x1,y1;
                         char xi1, xi2,xi3,yj3,yj2,yj1;
                         string str;
                         vector<int> nuc;
@@ -6119,7 +6274,7 @@ void Zuker::traceback_enumerate_dfs(double lambda, double gamma, size_t max_num_
 
                     case -2: {
                         // Example — in your code you handle special bt_data layout here
-                        int l = bt_data[0], xi_ = bt_data[2], _yj = bt_data[3];
+                        int xi_ = bt_data[2], _yj = bt_data[3];
                         new_path.nucle_seq[sigma(a, i) + 1] = xi_;
                         new_path.nucle_seq[sigma(b, j) - 1] = _yj;
                         break;
@@ -6172,8 +6327,7 @@ void Zuker::traceback_enumerate_dfs(double lambda, double gamma, size_t max_num_
 
                     case -6: {
                         int c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3], hx = bt_data[4], ky = bt_data[5], hi = bt_data[6], kj = bt_data[7];
-                        int xi_ = bt_data[8], _yj = bt_data[9], _hi = bt_data[10], kj_ = bt_data[11],  ll = bt_data[12], lr = bt_data[13];
-                        int na = bt_data[14], xa = bt_data[15], cp = bt_data[16], xc = bt_data[17], bp = bt_data[18], xb = bt_data[19], nd = bt_data[20], xd = bt_data[21];
+                        int xi_ = bt_data[8], _yj = bt_data[9], _hi = bt_data[10], kj_ = bt_data[11];
 
                         new_path.bp_bond[++new_path.t] = {sigma(c, i1), sigma(d, j1)};
                         int lc = sigma(c,i1), ld = sigma(d,j1);
@@ -6206,7 +6360,7 @@ void Zuker::traceback_enumerate_dfs(double lambda, double gamma, size_t max_num_
 
 
 
-size_t Zuker::traceback_count_dfs(double lambda, double gamma, double min_gamma) {
+size_t Zuker::traceback_count_dfs(double lambda, double gamma, [[maybe_unused]] double min_gamma) {
     stack<Path> dfs_stack;
 
     // Initial path
@@ -6240,10 +6394,6 @@ size_t Zuker::traceback_count_dfs(double lambda, double gamma, double min_gamma)
 //            count++;
             continue;
         }
-
-        int pa = protein[a], pb = protein[b];
-        int li = sigma(a,i), rj = sigma(b,j);
-        int xi = nucleotides[pa][x][i], yj = nucleotides[pb][y][j];
 
         vector<tuple<int, double, double, double, vector<int>>> options;
 
@@ -6333,10 +6483,10 @@ size_t Zuker::traceback_count_dfs(double lambda, double gamma, double min_gamma)
                         int c = bt_data[0], i1 = bt_data[1];
                         int hi = bt_data[2], c1 = bt_data[3], i1_ = bt_data[4], kj = bt_data[5];
 
-                        new_path.sector_stack.push_back({a, c, i, i1, x, hi, ml});
+                        new_path.sector_stack.push_back({a, c, i, i1, x, hi, ml, 0.0});
                         new_path.sector_stack.back().change = change + Access_M1(c1, b, i1_, j, kj, y);
 
-                        new_path.sector_stack.push_back({c1, b, i1_, j, kj, y, ml});
+                        new_path.sector_stack.push_back({c1, b, i1_, j, kj, y, ml, 0.0});
                         new_path.sector_stack.back().change = change + Access_M1(a, c, i, i1, x, hi);
 
                         break;
@@ -6390,7 +6540,7 @@ size_t Zuker::traceback_count_dfs(double lambda, double gamma, double min_gamma)
 
                     case -4: {
                         int c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3];
-                        int hx = bt_data[4], ky = bt_data[5], hi = bt_data[6], kj = bt_data[7];
+                        int hx = bt_data[4], ky = bt_data[5];
 
 
                         new_path.sector_stack.push_back({c, d, i1, j1, hx, ky, 2, change});
@@ -6401,16 +6551,13 @@ size_t Zuker::traceback_count_dfs(double lambda, double gamma, double min_gamma)
                         int c = bt_data[0], d = bt_data[1];
                         int i1 = bt_data[2], j1 = bt_data[3];
                         int hx = bt_data[4], ky = bt_data[5];
-                        int hi = bt_data[6], kj = bt_data[7];
 
                         new_path.sector_stack.push_back({c, d, i1, j1, hx, ky, 2, change});
                         break;
                     }
 
                     case -6: {
-                        int c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3], hx = bt_data[4], ky = bt_data[5], hi = bt_data[6], kj = bt_data[7];
-                        int xi_ = bt_data[8], _yj = bt_data[9], _hi = bt_data[10], kj_ = bt_data[11],  ll = bt_data[12], lr = bt_data[13];
-                        int na = bt_data[14], xa = bt_data[15], cp = bt_data[16], xc = bt_data[17], bp = bt_data[18], xb = bt_data[19], nd = bt_data[20], xd = bt_data[21];
+                        int c = bt_data[0], d = bt_data[1], i1 = bt_data[2], j1 = bt_data[3], hx = bt_data[4], ky = bt_data[5];
 
 
                         new_path.sector_stack.push_back({c, d, i1, j1, hx, ky, 2, change});
@@ -6510,6 +6657,16 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
                         t = -1;
                         mfe = t_mfe;
                         cai = t_cai;
+                        
+// #ifdef DEBUG_ZUKER_LOGGING
+//                         // DEBUG: Track final position O computation
+//                         if (a == 0 && b == 4 && i == 0 && j == 2 && x == 0 && y == 1) {
+//                             open_debug_file();
+//                             debug_file << "DEBUG Zuker O[0,4,0,2,0,1] Case1: E2[idx]=" << Access_E2(idx) 
+//                                  << ", AU=" << AU[xi][yj] << ", t_mfe=" << t_mfe 
+//                                  << ", t_cai=" << t_cai << ", ret=" << ret << endl;
+//                         }
+// #endif
                     }
                 }
 
@@ -6523,6 +6680,14 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
                         t = -2;
                         mfe = t_mfe;
                         cai = t_cai;
+// #ifdef DEBUG_ZUKER_LOGGING
+//                         // DEBUG: Track final position O computation
+//                         if (a == 0 && b == 4 && i == 0 && j == 2 && x == 0 && y == 1) {
+//                             open_debug_file();
+//                             debug_file << "DEBUG Zuker O[0,4,0,2,0,1] Case2: Z2[prev]=" << Access_Z2(a,b,i,j-1,x,y) 
+//                                  << ", t_mfe=" << t_mfe << ", t_cai=" << t_cai << ", ret=" << ret << endl;
+//                         }
+// #endif
                     }
                 }
 
@@ -6579,9 +6744,27 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
                         if (c == a && x != hx) continue;
                         int hi = nucleotides[pc][hx][i1];
                         if (i1 >= 1) {
-                            t_mfe = Access_Z2(a,c,i,i1-1,x,hx) + Access_E2(c,b,i1,j,hx,y) + lambda*AU[hi][yj];
+                            double left_z2 = Access_Z2(a,c,i,i1-1,x,hx);
+                            double right_e2 = Access_E2(c,b,i1,j,hx,y);
+                            double au_term = lambda*AU[hi][yj];
+                            t_mfe = left_z2 + right_e2 + au_term;
                             t_cai = Z_CAI[index(a,c,i,i1-1,x,hx)] + E_CAI[index(c,b,i1,j,hx,y)] - (lambda-1) * codon_cai[pc][hx];
                             temp_e = t_mfe + t_cai; // , idx_1 + hx // , idx_2 + 6*hx
+                            
+// #ifdef DEBUG_ZUKER_LOGGING
+//                             // DEBUG: Track first bifurcation that produces negative
+//                             static int bifurc_neg_count = 0;
+//                             bool debug_this_case4 = (a == 0 && b == 4 && i == 0 && j == 2 && c == 0 && i1 == 2);
+//                             if ((temp_e < 0 && bifurc_neg_count++ < 5) || debug_this_case4) {
+//                                 int right_idx = index(c,b,i1,j,hx,y);
+//                                 open_debug_file();
+//                                 debug_file << "DEBUG Zuker Case4[" << a << "," << b << "," << i << "," << j << "," << x << "," << y 
+//                                      << "] split at c=" << c << ",i1=" << i1 << ",hx=" << hx << ": left_Z2=" << left_z2 
+//                                      << " + right_E2=" << right_e2 << " (E2[" << right_idx << "]=" << E2[right_idx] << ")"
+//                                      << " + AU=" << au_term << " = " << t_mfe 
+//                                      << " (temp_e=" << temp_e << ")" << endl;
+//                             }
+// #endif
 
                             if (ret > temp_e) {
                                 if (a == 0 && b == 77 && i == 0 && j == 2 && x == 0 && y == 0) {
@@ -6628,18 +6811,292 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
                 if (b == n-1 && ret < e) {
                     e = ret;
                     minX = x, minY = y;
+// #ifdef DEBUG_ZUKER_LOGGING
+//                     // Log winning case at final position (for PBZ comparison) - log whenever we update e at b==n-1
+//                     if (n == 10) {
+//                         open_debug_file();
+//                         debug_file << "Zuker O_final: a=" << a << ",b=" << b << ",i=" << i << ",j=" << j << ",x=" << x << ",y=" << y
+//                              << " score=" << ret << " t=" << t;
+//                         if (t == -4) debug_file << " split_al=" << al << " il=" << il << " br=" << br << " jr=" << jr << " lc=" << (br*3+jr);
+//                         debug_file << endl;
+//                         debug_file.flush();
+//                     }
+// #endif
                 }
 
                 Access_O(idx) = ret;
                 Access_OB(idx) = t;
 
+// #ifdef DEBUG_ZUKER_LOGGING
+//                 // DEBUG 10aa: log O(0,8,0,1) recurrence to see how prefix 0..25 is built (feeds O(0,8,0,2)=-684)
+//                 if (n == 10 && a == 0 && b == 8 && i == 0 && j == 1 && ret < 0) {
+//                     open_debug_file();
+//                     debug_file << "Zuker O(0,8,0,1) x=" << x << " y=" << y << " ret=" << ret << " t=" << t;
+//                     if (t == -4) debug_file << " br=" << br << " jr=" << jr << " lc=" << (br*3+jr) << " (bifurcation)";
+//                     if (t == -3) debug_file << " (cross-codon from Z2(0,7,0,2))";
+//                     if (t == -2) debug_file << " (extend from Z2(0,8,0,0))";
+//                     if (t == -1) debug_file << " (paired E2+AU)";
+//                     debug_file << endl;
+//                     debug_file.flush();
+//                 }
+//                 // DEBUG 10aa: log O(0,6,0,2) recurrence at j=20 to see how -384 is built (split point)
+//                 if (n == 10 && a == 0 && b == 6 && i == 0 && j == 2 && ret < 0) {
+//                     open_debug_file();
+//                     debug_file << "Zuker O(0,6,0,2) x=" << x << " y=" << y << " ret=" << ret << " t=" << t;
+//                     if (t == -4) debug_file << " br=" << br << " jr=" << jr << " lc=" << (br*3+jr) << " (bifurcation)";
+//                     if (t == -3) debug_file << " (cross-codon)";
+//                     if (t == -2) debug_file << " (extend)";
+//                     if (t == -1) debug_file << " (paired)";
+//                     debug_file << endl;
+//                     debug_file.flush();
+//                 }
+//                 // DEBUG 10aa: log O(0,8,0,2) recurrence when score is negative to see how -684 is built
+//                 if (n == 10 && a == 0 && b == 8 && i == 0 && j == 2 && ret < 0) {
+//                     open_debug_file();
+//                     debug_file << "Zuker O(0,8,0,2) x=" << x << " y=" << y << " ret=" << ret << " t=" << t;
+//                     if (t == -4) debug_file << " br=" << br << " jr=" << jr << " lc=" << (br*3+jr) << " (bifurcation)";
+//                     if (t == -3) debug_file << " (cross-codon from Z2(0,7,0,2))";
+//                     if (t == -2) debug_file << " (extend from Z2(0,8,0,1))";
+//                     if (t == -1) debug_file << " (paired E2+AU)";
+//                     debug_file << endl;
+//                     debug_file.flush();
+//                 }
+//                 // DEBUG 10aa: log final O(0,9,0,2) once per (x,y) to see winning split
+//                 if (n == 10 && a == 0 && b == 9 && i == 0 && j == 2) {
+//                     static int final_log_count = 0;
+//                     if (final_log_count++ < 3) {
+//                         open_debug_file();
+//                         debug_file << "Zuker O(0,9,0,2) x=" << x << " y=" << y << " ret=" << ret << " e=" << e << " t=" << t;
+//                         if (t == -4) debug_file << " br=" << br << " jr=" << jr << " lc=" << (br*3+jr);
+//                         debug_file << endl;
+//                         debug_file.flush();
+//                     }
+//                 }
+// #endif
 
                 Access_Z2(idx) = mfe;
                 Z_CAI[idx] = cai;
+// #ifdef DEBUG_ZUKER_LOGGING
+//                 // DEBUG: Track when Z2 gets negative values
+//                 static int z2_neg_count = 0;
+//                 if (mfe < 0 && z2_neg_count++ < 10) {
+//                     open_debug_file();
+//                     debug_file << "DEBUG Zuker Z2[" << a << "," << b << "," << i << "," << j << "," << x << "," << y 
+//                          << "] = " << mfe << " (NEGATIVE), t=" << t << endl;
+//                 }
+// #endif
 
             }
         }
 
+// #ifdef DEBUG_ZUKER_LOGGING
+//         // DEBUG 10aa: Z2(0,6,0,2,x,y) at nuc position 20 for comparison with PBZ O[20] full-prefix
+//         if (n == 10 && a == 0 && b == 6 && i == 0 && j == 2) {
+//             open_debug_file();
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             debug_file << "Zuker_Z2_at_nuc_20 (a=0,b=6,i=0,j=2) x,y -> Z2:";
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_Z2(a, b, i, j, xx, yy);
+//                     debug_file << " (" << xx << "," << yy << ")=" << v;
+//                 }
+//             debug_file << " min=";
+//             double z2_20_min = inf;
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_Z2(a, b, i, j, xx, yy);
+//                     if (v < z2_20_min) z2_20_min = v;
+//                 }
+//             debug_file << z2_20_min << endl;
+//             debug_file.flush();
+//         }
+//         // DEBUG 10aa: Z2(0,7,0,0) and (0,7,0,1) at nuc 21,22 for comparison with PBZ O[21] O[22]
+//         if (n == 10 && a == 0 && b == 7 && i == 0 && (j == 0 || j == 1)) {
+//             open_debug_file();
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             int nuc_pos = (j == 0) ? 21 : 22;
+//             debug_file << "Zuker_Z2_at_nuc_" << nuc_pos << " (a=0,b=7,i=0,j=" << j << ") x,y -> Z2:";
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_Z2(a, b, i, j, xx, yy);
+//                     debug_file << " (" << xx << "," << yy << ")=" << v;
+//                 }
+//             double z2_min = inf;
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_Z2(a, b, i, j, xx, yy);
+//                     if (v < z2_min) z2_min = v;
+//                 }
+//             debug_file << " min=" << z2_min << endl;
+//             debug_file.flush();
+//         }
+//         // DEBUG 10aa: Z2(0,7,0,2) at nuc 23 and Z2(0,9,0,2) at nuc 29 (final) to find score gap
+//         if (n == 10 && a == 0 && (b == 7 || b == 9) && i == 0 && j == 2) {
+//             open_debug_file();
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             int nuc_pos = 3 * b + 2;
+//             debug_file << "Zuker_Z2_at_nuc_" << nuc_pos << " (a=0,b=" << b << ",i=0,j=2) x,y -> Z2:";
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_Z2(a, b, i, j, xx, yy);
+//                     debug_file << " (" << xx << "," << yy << ")=" << v;
+//                 }
+//             double z2_min = inf;
+//             int best_xx = -1, best_yy = -1;
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_Z2(a, b, i, j, xx, yy);
+//                     if (v < z2_min) { z2_min = v; best_xx = xx; best_yy = yy; }
+//                 }
+//             debug_file << " min=" << z2_min << " best_xy=(" << best_xx << "," << best_yy << ")" << endl;
+//             debug_file.flush();
+//         }
+//         // DEBUG 10aa: O at nucleotide position 4 (prefix 0..4) for O[4]+E(5,29) comparison with PBZ
+//         if (n == 10 && a == 0 && b == 1 && i == 0 && j == 1) {
+//             double o4_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o4_min) o4_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_4 (a=0,b=1,i=0,j=1): min=" << o4_min << endl;
+//         }
+//         // DEBUG 10aa: O at positions 23,24,25,26 - optimal path chain
+//         if (n == 10 && a == 0 && b == 8 && i == 0 && j == 2) {
+//             double o26_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o26_min) o26_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_26 (a=0,b=8,i=0,j=2): min=" << o26_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 7 && i == 0 && j == 2) {
+//             double o23_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o23_min) o23_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_23 (a=0,b=7,i=0,j=2): min=" << o23_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 8 && i == 0 && j == 0) {
+//             double o24_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o24_min) o24_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_24 (a=0,b=8,i=0,j=0): min=" << o24_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 8 && i == 0 && j == 1) {
+//             double o25_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o25_min) o25_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_25 (a=0,b=8,i=0,j=1): min=" << o25_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 5 && i == 0 && j == 0) {
+//             double o15_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o15_min) o15_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_15 (a=0,b=5,i=0,j=0): min=" << o15_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 5 && i == 0 && j == 1) {
+//             double o16_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o16_min) o16_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_16 (a=0,b=5,i=0,j=1): min=" << o16_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 5 && i == 0 && j == 2) {
+//             double o17_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o17_min) o17_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_17 (a=0,b=5,i=0,j=2): min=" << o17_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 6 && i == 0 && j == 0) {
+//             double o18_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o18_min) o18_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_18 (a=0,b=6,i=0,j=0): min=" << o18_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 6 && i == 0 && j == 1) {
+//             double o19_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o19_min) o19_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_19 (a=0,b=6,i=0,j=1): min=" << o19_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 6 && i == 0 && j == 2) {
+//             double o20_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o20_min) o20_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_20 (a=0,b=6,i=0,j=2): min=" << o20_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 7 && i == 0 && j == 0) {
+//             double o21_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o21_min) o21_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_21 (a=0,b=7,i=0,j=0): min=" << o21_min << endl;
+//         }
+//         if (n == 10 && a == 0 && b == 7 && i == 0 && j == 1) {
+//             double o22_min = inf;
+//             int nca = n_codon[protein[a]], ncb = n_codon[protein[b]];
+//             for (int xx = 0; xx < nca; xx++)
+//                 for (int yy = 0; yy < ncb; yy++) {
+//                     double v = Access_O(a, b, i, j, xx, yy);
+//                     if (v < o22_min) o22_min = v;
+//                 }
+//             open_debug_file();
+//             debug_file << "Zuker_O_at_nuc_pos_22 (a=0,b=7,i=0,j=1): min=" << o22_min << endl;
+//         }
+// #endif
     }
 
 
@@ -6654,6 +7111,66 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
     mfe = Access_Z2(0,n-1,0,2,minX, minY);
     cai = Z_CAI[index(0,n-1,0,2,minX, minY)];
     fout << "lambda: " << lambda << ",O: " << res << ",mfe: " << mfe/lambda << ",cai: " << cai/(lambda-1) << ",combined: " << mfe +  cai << endl;
+
+// #ifdef DEBUG_ZUKER_LOGGING
+//     // DEBUG: E2 segments for 10aa comparison with PBZ (E(8,26), E(7,27), E(6,28), E(5,29))
+//     if (n == 10) {
+//         open_debug_file();
+//         double e529_min = inf;
+//         int pa1 = protein[1], pb9 = protein[9];
+//         int nxa = n_codon[pa1], nyb = n_codon[pb9];
+//         for (int x = 0; x < nxa; ++x)
+//             for (int y = 0; y < nyb; ++y) {
+//                 double v = Access_E2(1, 9, 2, 2, x, y);
+//                 if (v < e529_min && v < 1e6) e529_min = v;
+//             }
+//         debug_file << "Zuker_E529_min (E2 segment 5..29): " << e529_min << " (n=10)" << endl;
+//         // E(8,26) -> (a,b,i,j)=(2,8,2,2)
+//         double e826_min = inf;
+//         int pa2 = protein[2], pb8 = protein[8];
+//         int nxa2 = n_codon[pa2], nyb8 = n_codon[pb8];
+//         for (int x = 0; x < nxa2; ++x)
+//             for (int y = 0; y < nyb8; ++y) {
+//                 double v = Access_E2(2, 8, 2, 2, x, y);
+//                 if (v < e826_min && v < 1e6) e826_min = v;
+//             }
+//         debug_file << "Zuker_E826_min (E2 segment 8..26): " << e826_min << " (n=10)" << endl;
+//         // E(7,27) -> (a,b,i,j)=(2,9,1,0)
+//         double e727_min = inf;
+//         for (int x = 0; x < nxa2; ++x)
+//             for (int y = 0; y < nyb; ++y) {
+//                 double v = Access_E2(2, 9, 1, 0, x, y);
+//                 if (v < e727_min && v < 1e6) e727_min = v;
+//             }
+//         debug_file << "Zuker_E727_min (E2 segment 7..27): " << e727_min << " (n=10)" << endl;
+//         // E(6,28) -> (a,b,i,j)=(2,9,0,1)
+//         double e628_min = inf;
+//         for (int x = 0; x < nxa2; ++x)
+//             for (int y = 0; y < nyb; ++y) {
+//                 double v = Access_E2(2, 9, 0, 1, x, y);
+//                 if (v < e628_min && v < 1e6) e628_min = v;
+//             }
+//         debug_file << "Zuker_E628_min (E2 segment 6..28): " << e628_min << " (n=10)" << endl;
+//         // E2(1,6,2,2) = segment 5..20, needed for O[4]+E(5,20)->O[20]=-384
+//         double e520_min = inf;
+//         int p1 = protein[1], p6 = protein[6];
+//         int nx1 = n_codon[p1], ny6 = n_codon[p6];
+//         for (int x = 0; x < nx1; ++x)
+//             for (int y = 0; y < ny6; ++y) {
+//                 double v = Access_E2(1, 6, 2, 2, x, y);
+//                 if (v < e520_min && v < 1e6) e520_min = v;
+//             }
+//         debug_file << "Zuker_E520_min (E2 segment 5..20): " << e520_min << " (n=10)" << endl;
+//         // E2(1,6,1,2) = segment 4..20, for O[3]+E(4,20)->O[20]=-384
+//         double e420_min = inf;
+//         for (int x = 0; x < nx1; ++x)
+//             for (int y = 0; y < ny6; ++y) {
+//                 double v = Access_E2(1, 6, 1, 2, x, y);
+//                 if (v < e420_min && v < 1e6) e420_min = v;
+//             }
+//         debug_file << "Zuker_E420_min (E2 segment 4..20): " << e420_min << " (n=10)" << endl;
+//     }
+// #endif
 
 //    cout << "a: " << 45 << ", b: " << 75 << ", i: " << 1 << ", j: " << 1 << ", x: " <<  1 << ", y: " << 0 << ", en: " << -6 << endl;
 //    cout << M1[index(45, 75, 1, 1, 1, 0)] << "vector = [";
@@ -6752,23 +7269,24 @@ void Zuker::calculate_CAI_E(double lambda) {
     }
 }
 
-double Zuker::add_hairpin_CAI_2(int a, int b, int x, int y, int a1, int x1, int b1, int y1) const {
+double Zuker::add_hairpin_CAI_2(int a, int b, int x, int y, int a1, int x1, int b1, int y1, int i_left, int j_right) const {
     double cai = 0;
-    cai = codon_cai[protein[a]][x];
-    if (b != a) cai += codon_cai[protein[b]][y];
+    // Only add closing codon CAI when that base is the last in its codon (i/j==2). Otherwise same (a,b,i,j) would get different cai for different (x,y).
+    if (i_left < 0 || i_left == 2) cai += codon_cai[protein[a]][x];
+    if (b != a && (j_right < 0 || j_right == 2)) cai += codon_cai[protein[b]][y];
 
     if (a1 == -1 && x1 == -1 && b1 == -1 && y1 == -1) {
         return cai;
     } else if (b1 == -1 && y1 == -1) {
-        if (a1 != a && a1 != b) {
+        if (a1 >= 0 && a1 != a && a1 != b) {
             cai += codon_cai[protein[a1]][x1];
         }
         return cai;
     } else {
-        if (a1 != a && a1 != b) {
+        if (a1 >= 0 && x1 >= 0 && a1 != a && a1 != b) {
             cai += codon_cai[protein[a1]][x1];
         }
-        if (b1 != a && b1 != b && b1 != a1) {
+        if (b1 >= 0 && y1 >= 0 && b1 != a && b1 != b && b1 != a1) {
             cai += codon_cai[protein[b1]][y1];
         }
         return cai;
@@ -6776,24 +7294,23 @@ double Zuker::add_hairpin_CAI_2(int a, int b, int x, int y, int a1, int x1, int 
 
 }
 
-double Zuker::add_hairpin_CAI_8(int a, int b, int x, int y, int a1, int x1, int b1, int y1) const {
+double Zuker::add_hairpin_CAI_8(int a, int b, int x, int y, int a1, int x1, int b1, int y1, int i_left, int j_right) const {
     double cai = 0;
-    cai = codon_cai[protein[a]][x];
-    if (b != a) cai += codon_cai[protein[b]][y];
+    if (i_left < 0 || i_left == 2) cai += codon_cai[protein[a]][x];
+    if (b != a && (j_right < 0 || j_right == 2)) cai += codon_cai[protein[b]][y];
     if (a1 == -1 && x1 == -1 && b1 == -1 && y1 == -1) {
         return cai;
     }
     else if (b1 == -1 && y1 == -1) {
-        if (a1 != a && a1 != b)
+        if (a1 >= 0 && a1 != a && a1 != b)
             cai += codon_cai[protein[a1]][x1];
         return cai;
     }
     else {
-
-        if (a1 != a && a1 != b)
+        if (a1 >= 0 && x1 >= 0 && a1 != a && a1 != b)
             cai += codon_cai[protein[a1]][x1];
 
-        if (b1 != a && b1 != b && b1 != a1)
+        if (b1 >= 0 && y1 >= 0 && b1 != a && b1 != b && b1 != a1)
             cai += codon_cai[protein[b1]][y1];
 
         return cai;
@@ -7641,6 +8158,22 @@ void Zuker::maxCAISeq() {
             nucle_seq[3 * i + j] = nucleotides[p][idx][j];
         }
     }
+}
+
+double Zuker::get_final_mfe(double lambda) const {
+    if (minX < 0 || minY < 0 || n == 0) return 0.0;
+    if (lambda <= 0.0) return 0.0;
+    int idx = index(0, n - 1, 0, 2, minX, minY);
+    if (idx < 0 || (size_t)idx >= Z2.size()) return 0.0;
+    return Z2[idx] / lambda;
+}
+
+double Zuker::get_final_cai(double lambda) const {
+    if (minX < 0 || minY < 0 || n == 0) return 0.0;
+    if (lambda >= 1.0 || (1.0 - lambda) < 1e-9) return 0.0;
+    int idx = index(0, n - 1, 0, 2, minX, minY);
+    if (idx < 0 || (size_t)idx >= Z_CAI.size()) return 0.0;
+    return Z_CAI[idx] / (lambda - 1.0);
 }
 
 void Zuker::get_rna_cai(string & rna) {
@@ -8527,8 +9060,6 @@ void Zuker::helper_E(int a, int b, int i, int j, int x, int y, double lambda, pr
     int pb = protein[b];
     int pna = protein[a + 1];
     int ppb = protein[b - 1];
-    const int n_codon_a = n_codon[pa];
-    const int n_codon_b = n_codon[pb];
     const int n_codon_an = n_codon[pna];
     const int n_codon_bp = n_codon[ppb];
     int la = sigma(a,i);
@@ -8596,7 +9127,6 @@ void Zuker::helper_O(int a, int b, int i, int j, int x, int y, double lambda, pr
     int t = 0;
     int ppb = protein[b-1];
     int pb = protein[b];
-    const int n_codon_b = n_codon[pb];
 
     BeamEntry en(energy, a, b, i, j, x, y, t, mfe, cai,
                  {});
@@ -8792,10 +9322,8 @@ double Zuker::calculate_O_beam(std::ostream & fout, double lambda) {
 
 void Zuker::calculate_E_beam(double lambda) {
     priority_queue<BeamEntry> prev_beam, curr_beam;
-    double min_energy = inf, energy = inf;
     int nuc_len = 3 * n;
     int len = 4;
-    int t;
     static vector<int> temp;
 
     int max_a = n - (int)floor(len/3);
@@ -9038,4 +9566,101 @@ Zuker::~Zuker() = default;
 
 Zuker::Zuker(const Zuker & Copy):Z(Copy.Z.size()),n(Copy.n) {
     copy(Copy.Z.begin(), Copy.Z.end(), Z.begin());
+}
+
+void Zuker::dump_O_table(ostream& fout) {
+    fout << "# Zuker O table\n";
+    fout << "# Format: a b i j x y score mfe cai\n";
+    for (int a = 0; a < n; ++a) {
+        for (int b = a; b < n; ++b) {
+            int pa = protein[a];
+            int pb = protein[b];
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    for (int x = 0; x < n_codon[pa]; ++x) {
+                        for (int y = 0; y < n_codon[pb]; ++y) {
+                            int idx = index(a, b, i, j, x, y);
+                            double o_val = Access_O(idx);
+                            if (o_val != 0 && o_val != inf) {
+                                fout << a << " " << b << " " << i << " " << j << " " << x << " " << y 
+                                     << " " << fixed << setprecision(6) << o_val << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void Zuker::dump_E_table(ostream& fout) {
+    fout << "# Zuker E1 table (combined score)\n";
+    fout << "# Format: a b i j x y E1_value\n";
+    for (int a = 0; a < n; ++a) {
+        for (int b = a; b < n; ++b) {
+            int pa = protein[a];
+            int pb = protein[b];
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    for (int x = 0; x < n_codon[pa]; ++x) {
+                        for (int y = 0; y < n_codon[pb]; ++y) {
+                            double e1_val = Access_E1(a, b, i, j, x, y);
+                            if (e1_val != inf && e1_val != 0) {
+                                fout << a << " " << b << " " << i << " " << j << " " << x << " " << y 
+                                     << " " << fixed << setprecision(6) << e1_val << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void Zuker::dump_Z2_table(ostream& fout) {
+    fout << "# Zuker Z2 table (MFE component from O)\n";
+    fout << "# Format: a b i j x y Z2_value\n";
+    for (int a = 0; a < n; ++a) {
+        for (int b = a; b < n; ++b) {
+            int pa = protein[a];
+            int pb = protein[b];
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    for (int x = 0; x < n_codon[pa]; ++x) {
+                        for (int y = 0; y < n_codon[pb]; ++y) {
+                            double z2_val = Access_Z2(a, b, i, j, x, y);
+                            if (z2_val != 0 && z2_val != inf) {
+                                fout << a << " " << b << " " << i << " " << j << " " << x << " " << y 
+                                     << " " << fixed << setprecision(6) << z2_val << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void Zuker::dump_E2_table(ostream& fout) {
+    fout << "# Zuker E2 table (MFE component)\n";
+    fout << "# Format: a b i j x y E2_value\n";
+    for (int a = 0; a < n; ++a) {
+        for (int b = a; b < n; ++b) {
+            int pa = protein[a];
+            int pb = protein[b];
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    for (int x = 0; x < n_codon[pa]; ++x) {
+                        for (int y = 0; y < n_codon[pb]; ++y) {
+                            double e2_val = Access_E2(a, b, i, j, x, y);
+                            if (e2_val != inf && e2_val != 0) {
+                                fout << a << " " << b << " " << i << " " << j << " " << x << " " << y 
+                                     << " " << fixed << setprecision(6) << e2_val << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
