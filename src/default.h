@@ -28,7 +28,10 @@ using namespace std;
 //       capped silently here, which is correct (only one tied entry is needed).
 // CAP=16 gives comfortable headroom and nice alignment (16*4=64 bytes).
 struct BtInfo {
-    static constexpr int CAP = 16;
+    // CAP shrunk from 16 → 10 — no call site exceeds 9 elements (verified by grep).
+    // Saves 24 bytes per BtInfo, which appears in BeamEntry plus every XYVariant
+    // (so an entry with 3 variants saves ~96 bytes per copy).
+    static constexpr int CAP = 10;
     int8_t len = 0;
     int data[CAP] = {};
 
@@ -124,7 +127,6 @@ struct BeamEntry {
     int cs_inner_right = -1;
     // cs_pack_outer: int CS key from cs_get_index (stored as long long; -1 = not from CS)
     long long cs_pack_outer = -1LL;
-    long long cs_pack_inner_c = -1; // unused (kept for ABI compat)
 
     // --- 1-BYTE MEMBERS ---
     // i and j are guaranteed to be <= 2, so 8 bits is plenty.
@@ -162,6 +164,18 @@ struct BeamEntry {
     // All (x,y) codon-pair variants for this structural state, for use during fill expansion.
     // The top-level x,y,mfe,cai,score,bt_info always mirror the best variant.
     std::vector<XYVariant> variants;
+
+    // Direct (x,y) -> variants[] index table. -1 means slot absent.
+    // x ∈ [0,6), y ∈ [0,6), so 36 slots. int8_t is sufficient (variants cap = 36).
+    // Replaces O(V) linear scan in update_derna with O(1) lookup.
+    int8_t variant_idx[6][6] = {
+        {-1,-1,-1,-1,-1,-1},
+        {-1,-1,-1,-1,-1,-1},
+        {-1,-1,-1,-1,-1,-1},
+        {-1,-1,-1,-1,-1,-1},
+        {-1,-1,-1,-1,-1,-1},
+        {-1,-1,-1,-1,-1,-1},
+    };
 };
 
 struct LambdaResult {

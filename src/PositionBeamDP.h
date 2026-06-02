@@ -17,8 +17,12 @@ using DernaBeamMap = ankerl::unordered_dense::map<int, BeamEntry>;
 #ifndef HAIRPIN_GAP
 #define HAIRPIN_GAP 3
 #endif
+// Cap on single-stranded segment length inside interior loops, hairpin loops,
+// and multi-loops. The energy model permits up to MAXLOOP=30 (Turner standard,
+// used by LinearFold and CONTRAfold). Lower values prune more aggressively at
+// the cost of dropping optimal structures whose segments exceed the cap.
 #ifndef SINGLE_MAX_LEN
-#define SINGLE_MAX_LEN 20
+#define SINGLE_MAX_LEN 30
 #endif
 
 // DP tables: indexed by nucleotide position; each holds states keyed by index(a,b,i,j,x,y).

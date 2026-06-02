@@ -309,7 +309,7 @@ void help()
     printf("Usage:\n");
     printf(" -i -- input file path\n");
     printf(" -o -- output file path\n");
-    printf(" -m -- model <0,1,7,-1> , 0=Nussinov, 1=Zuker, 7=PositionBeamDP (fill+traceback), -1=Evaluation\n");
+    printf(" -m -- model <0,1,7,8,-1> , 0=Nussinov, 1=Zuker, 7=PositionBeamDP (fill+traceback), 8=LinearFoldCDS skeleton (Phase 3, WIP), -1=Evaluation\n");
     printf(" -s -- mode <1,2,3>, 1 for MFE only, 2 for balancing MFE and CAI at fixed lambda, 3 for lambda sweep\n");
     printf(" -l -- lambda <[0,1]>\n");
     printf(" -a -- sweep increment <(0,1]>\n");
@@ -318,6 +318,7 @@ void help()
     printf(" -g -- minimum gap allowed in Nussinov <[0,inf)>\n");
     printf(" -k -- beam width for PositionBeamDP (model 7) <[1,inf)>, default=10\n");
     printf(" -b -- beam start length <[4,inf)>, default=5 (length at which to start beam pruning)\n");
+    printf(" -j -- number of OpenMP threads (0/unset = default, honored by -m 2 and -m 7)\n");
     printf(" -t -- threshold tau1 <(0,1)>\n");
     printf(" -p -- threshold tau2 <(0,1)>\n");
     printf(" -c -- codon usage table file path\n");
@@ -516,6 +517,7 @@ double evaluate_structure_energy(const vector<int>& seq, const string& bp_str) {
     // We follow the Zuker convention: walk each closed pair and decompose.
 
     int total_energy = 0;
+    const bool ese_trace = (std::getenv("DERNA_ESE_TRACE") != nullptr);
 
     // For each closing pair (i,j), find what's inside:
     // - If exactly one enclosed pair (p,q) with p=i+1,q=j-1: stacking
@@ -527,6 +529,7 @@ double evaluate_structure_energy(const vector<int>& seq, const string& bp_str) {
     for (int i = 0; i < n; i++) {
         int j = pt[i];
         if (j <= i) continue;  // only process i < j, and only where i is '('
+        int e_before = total_energy;
 
         // Find enclosed pairs
         vector<pair<int,int>> enclosed;
@@ -660,21 +663,43 @@ double evaluate_structure_energy(const vector<int>& seq, const string& bp_str) {
             }
             total_energy += ml_e;
         }
+        if (ese_trace) {
+            int contrib = total_energy - e_before;
+            const char* kind = enclosed.empty() ? "HP"
+                : (enclosed.size() == 1 ? "IL/BUL/STK" : "ML");
+            std::cerr << "[ese_trace] pair=(" << i << "," << j << ")"
+                      << " enclosed=" << enclosed.size()
+                      << " kind=" << kind
+                      << " contrib=" << contrib
+                      << " cumul=" << total_energy << "\n";
+        }
     }
 
     // External loop: AU penalties for stems directly on the exterior
     // The Zuker algorithm adds AU penalties for external stems in W computation.
     // We add AU penalty for each stem at the external level.
+    int ext_energy = 0;
     {
         int k = 0;
         while (k < n) {
             if (pt[k] > k) {
-                total_energy += AU[seq[k]][seq[pt[k]]];
+                int au = AU[seq[k]][seq[pt[k]]];
+                ext_energy += au;
+                total_energy += au;
+                if (ese_trace) {
+                    std::cerr << "[ese_trace] EXTERNAL stem at k=" << k
+                              << " pair=(" << k << "," << pt[k] << ")"
+                              << " au=" << au << "\n";
+                }
                 k = pt[k] + 1;
             } else {
                 k++;
             }
         }
+    }
+    if (ese_trace) {
+        std::cerr << "[ese_trace] total_external_au=" << ext_energy
+                  << " TOTAL=" << total_energy << "\n";
     }
 
     return (double)total_energy;

@@ -94,8 +94,14 @@ void Zuker::init_values() {
     bp_bond.resize(3*n);
     ava_nucle_p.resize(3*6*n, 0);
     ava_nucle_m.resize(3*6*n, 0);
+    // Flat per-position CAI lookup: protein_cai[p*6 + x] = codon_cai[protein[p]][x].
+    protein_cai.assign(6 * n, 0.0);
     for (int a = 0; a < n; ++a) {
-        for (int x = 0; x < n_codon[protein[a]]; ++x) {
+        int pa = protein[a];
+        for (int x = 0; x < 6; ++x) {
+            protein_cai[6*a + x] = codon_cai[pa][x];
+        }
+        for (int x = 0; x < n_codon[pa]; ++x) {
             for (int i = 0; i < 3; ++i) {
                 int idx = index(a,x,i);
                 if (a < n-1) ava_nucle_p[idx] = ava_nucleotides_int(a,x,i,1);
@@ -323,9 +329,9 @@ void Zuker::calculate_E() {
     vector<int> H(96,inf);
     vector<int> MT(256, inf);
 
-    static bool updatedT[1536];
-    static bool updatedH[96];
-    static bool updatedM[256];
+    thread_local static bool updatedT[1536];
+    thread_local static bool updatedH[96];
+    thread_local static bool updatedM[256];
 
     memset(updatedH, false, 96);
     memset(updatedM, false, 256);
@@ -801,7 +807,7 @@ tuple<double, double, double, vector<int>> Zuker::hairpin_special_CAI(double lam
     string s;
     double temp_mfe, temp_cai;
     double hairpin_energy = inf, mfe = inf, cai = inf, temp_e = inf;
-    static vector<int> temp;
+    thread_local static vector<int> temp;
 //    cout << "hairpin" << ", l: " << l << ", a: " << a << ", b: "<< b << ", i: " << i << ", j: " << j << endl;
     switch (l) {
         int xi2_, _2yj, xi3_, _3yj;
@@ -973,7 +979,7 @@ double Zuker::hairpin_CAI(double lambda, int l,int a, int b, int pa, int pb, int
     string s;
     double temp_mfe, temp_cai;
     double temp_e;
-    static vector<int> temp;
+    thread_local static vector<int> temp;
     int la = sigma(a,i), lb = sigma(b,j);
 
     int xi_, _yj;
@@ -1166,10 +1172,10 @@ bool Zuker::rightCodon(int l1, int l2, int x, int y) const {
 int Zuker::internal(int a, int b, int i, int j, int x, int y, int la, int lb, int xi, int yj, int an_int, int bp_int) {
     int internal_energy = inf, energy = inf;
     int t = 0;
-    static vector<int> H(96,inf);
-    static vector<int> T(256,inf);
+    thread_local static vector<int> H(96,inf);
+    thread_local static vector<int> T(256,inf);
 
-    static bool updatedH[96];
+    thread_local static bool updatedH[96];
     memset(updatedH, false, 96);
 
     int idx_m = index(a,b,i,j,x,y);
@@ -1308,7 +1314,7 @@ double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int 
     int t = 0;
 
     // store back pointers
-    static vector<int> tmp, temp, temp11;
+    thread_local static vector<int> tmp, temp, temp11;
 
     int idx_m = index(a,b,i,j,x,y);
     int cx = 0,cy = 0;
@@ -2007,32 +2013,28 @@ double Zuker::internal_CAI(double lambda, int a, int b,int i, int j, int x, int 
 
 double Zuker::add_interior_CAI_2(int a, int c, int x, int na, int x1, int pc, int h1) const {
     if (a == c) return 0;
-    double cai = codon_cai[protein[a]][x];
+    double cai = protein_cai[6*a + x];
     if (na == -1 && x1 == -1 && pc == -1 && h1 == -1) {
         return cai;
     } else if (pc == -1 && h1 == -1) {
         if (na != a && na != c) {
-            cai += codon_cai[protein[na]][x1];
+            cai += protein_cai[6*na + x1];
         }
-
         return cai;
     } else {
-
         if (na != a && na != c) {
-            cai += codon_cai[protein[na]][x1];
+            cai += protein_cai[6*na + x1];
         }
         if (pc != c && pc != a && pc != na) {
-            cai += codon_cai[protein[pc]][h1];
+            cai += protein_cai[6*pc + h1];
         }
         return cai;
     }
-
 }
 
 double Zuker::add_CAI(int p1, int p2, int x) const {
     if (p1 == p2) return 0;
-    double cai = codon_cai[protein[p1]][x];
-    return cai;
+    return protein_cai[6*p1 + x];
 }
 
 int Zuker::multi_loop(int a, int b, int i, int j, int x, int y, int pa, int pb, int n_codon_an, int n_codon_bp) {
@@ -2072,7 +2074,7 @@ double Zuker::multi_loop_CAI(double lambda,int a, int b, int i, int j, int x, in
     double multi_loop = inf;
     double temp_e;
     double mfe, cai;
-    static vector<int> temp;
+    thread_local static vector<int> temp;
 
     if (a < b-2 && i == 2 && j == 0) {
         for (int x1 = 0; x1 < n_codon_an; ++x1) {
@@ -7186,15 +7188,21 @@ double Zuker::calculate_CAI_O(ostream & fout, double lambda) {
 }
 
 void Zuker::calculate_CAI_E(double lambda) {
-    double min_energy = inf, energy = inf;
-    int t;
-    static vector<int> temp;
-
     int nuc_len = 3*n;
     for (int len = 4; len < nuc_len; ++len) {
         cout << "\rE/M -- Completed: " << (len*1.0/nuc_len) * 100 << "%" << flush;
         int max_a = n - (int)floor(len/3);
-        for (int a = 0, b; a < max_a; ++a) {
+        // Iterations over `a` at fixed `len` are independent: each writes to a
+        // unique (a, b, i, j, x, y) cell and only reads from smaller-length cells
+        // filled in previous `len` iterations. Scratch state in the helpers
+        // (hairpin_CAI, internal_CAI, multi_loop_CAI, calculate_CAI_M) was
+        // converted from `static` to `thread_local static` so threads don't alias.
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int a = 0; a < max_a; ++a) {
+            int b;
+            double min_energy = inf, energy = inf;
+            int t;
+            thread_local static vector<int> temp;
             for (int i = 0; i < 3; ++i) {
 
                 int j = (i+len) % 3;
@@ -7213,10 +7221,12 @@ void Zuker::calculate_CAI_E(double lambda) {
                 int lb = sigma(b,j);
                 int l = lb - la;
                 for (int x = 0; x < n_codon_a; x++) {
+                    // Hoist x-only lookups out of the y loop.
+                    const int xi = nucleotides[pa][x][i];
+                    const int* const bp_row = BP_pair[xi + 1];
                     for (int y = 0; y < n_codon_b; y++) {
-                        int xi = nucleotides[pa][x][i];
                         int yj = nucleotides[pb][y][j];
-                        int type = BP_pair[xi+1][yj+1];
+                        int type = bp_row[yj + 1];
 
 
                         // the other end does not pair
@@ -7272,51 +7282,48 @@ void Zuker::calculate_CAI_E(double lambda) {
 double Zuker::add_hairpin_CAI_2(int a, int b, int x, int y, int a1, int x1, int b1, int y1, int i_left, int j_right) const {
     double cai = 0;
     // Only add closing codon CAI when that base is the last in its codon (i/j==2). Otherwise same (a,b,i,j) would get different cai for different (x,y).
-    if (i_left < 0 || i_left == 2) cai += codon_cai[protein[a]][x];
-    if (b != a && (j_right < 0 || j_right == 2)) cai += codon_cai[protein[b]][y];
+    if (i_left < 0 || i_left == 2) cai += protein_cai[6*a + x];
+    if (b != a && (j_right < 0 || j_right == 2)) cai += protein_cai[6*b + y];
 
     if (a1 == -1 && x1 == -1 && b1 == -1 && y1 == -1) {
         return cai;
     } else if (b1 == -1 && y1 == -1) {
         if (a1 >= 0 && a1 != a && a1 != b) {
-            cai += codon_cai[protein[a1]][x1];
+            cai += protein_cai[6*a1 + x1];
         }
         return cai;
     } else {
         if (a1 >= 0 && x1 >= 0 && a1 != a && a1 != b) {
-            cai += codon_cai[protein[a1]][x1];
+            cai += protein_cai[6*a1 + x1];
         }
         if (b1 >= 0 && y1 >= 0 && b1 != a && b1 != b && b1 != a1) {
-            cai += codon_cai[protein[b1]][y1];
+            cai += protein_cai[6*b1 + y1];
         }
         return cai;
     }
-
 }
 
 double Zuker::add_hairpin_CAI_8(int a, int b, int x, int y, int a1, int x1, int b1, int y1, int i_left, int j_right) const {
     double cai = 0;
-    if (i_left < 0 || i_left == 2) cai += codon_cai[protein[a]][x];
-    if (b != a && (j_right < 0 || j_right == 2)) cai += codon_cai[protein[b]][y];
+    if (i_left < 0 || i_left == 2) cai += protein_cai[6*a + x];
+    if (b != a && (j_right < 0 || j_right == 2)) cai += protein_cai[6*b + y];
     if (a1 == -1 && x1 == -1 && b1 == -1 && y1 == -1) {
         return cai;
     }
     else if (b1 == -1 && y1 == -1) {
         if (a1 >= 0 && a1 != a && a1 != b)
-            cai += codon_cai[protein[a1]][x1];
+            cai += protein_cai[6*a1 + x1];
         return cai;
     }
     else {
         if (a1 >= 0 && x1 >= 0 && a1 != a && a1 != b)
-            cai += codon_cai[protein[a1]][x1];
+            cai += protein_cai[6*a1 + x1];
 
         if (b1 >= 0 && y1 >= 0 && b1 != a && b1 != b && b1 != a1)
-            cai += codon_cai[protein[b1]][y1];
+            cai += protein_cai[6*b1 + y1];
 
         return cai;
     }
-
-
 }
 
 double Zuker::add_hairpin_CAI_3(vector<int> &s, int sp) const {
@@ -7356,7 +7363,7 @@ void Zuker::calculate_CAI_M(int a, int b, int i, int j, int x, int y, double lam
     int idx = index(a,b,i,j,x,y);
 
     double temp_e;
-    static vector<int> temp, temp2;
+    thread_local static vector<int> temp, temp2;
 
     if (type > 0) {
         min_energy = min(min_energy, Access_E1(idx) + lambda*ML_intern + lambda*AU[ni][nj]);
@@ -8391,7 +8398,7 @@ double Zuker::internal_beam(double lambda, int a, int b,int i, int j, int x, int
     int t = 0;
 
     // store back pointers
-    static vector<int> tmp, temp, temp11;
+    thread_local static vector<int> tmp, temp, temp11;
 
     int idx_m = index(a,b,i,j,x,y);
     if (E_beam.count(idx_m) == 0) E_beam[idx_m] = BeamEntry();
@@ -8985,7 +8992,7 @@ double Zuker::multi_loop_beam(double lambda,int a, int b, int i, int j, int x, i
     double multi_loop = inf;
     double temp_e;
     double mfe, cai;
-    static vector<int> temp;
+    thread_local static vector<int> temp;
 
     if (a < b-2 && i == 2 && j == 0) {
         for (int x1 = 0; x1 < n_codon_an; ++x1) {
@@ -9071,7 +9078,7 @@ void Zuker::helper_E(int a, int b, int i, int j, int x, int y, double lambda, pr
     int type = BP_pair[xi+1][yj+1];
 
     int idx = index(a, b, i, j, x, y);
-    static vector<int> temp;
+    thread_local static vector<int> temp;
 
     if (type == 0) {
         calculate_M_beam(a,b,i,j,x,y,lambda);
@@ -9324,7 +9331,7 @@ void Zuker::calculate_E_beam(double lambda) {
     priority_queue<BeamEntry> prev_beam, curr_beam;
     int nuc_len = 3 * n;
     int len = 4;
-    static vector<int> temp;
+    thread_local static vector<int> temp;
 
     int max_a = n - (int)floor(len/3);
     for (int a = 0, b; a < max_a; ++a) {
@@ -9415,7 +9422,7 @@ void Zuker::calculate_M_beam(int a, int b, int i, int j, int x, int y, double la
     int idx = index(a,b,i,j,x,y);
 
     double temp_e;
-    static vector<int> temp, temp2;
+    thread_local static vector<int> temp, temp2;
 
     if (type > 0) {
         min_energy = min(min_energy, E_beam[idx].score + lambda*ML_intern + lambda*AU[ni][nj]);

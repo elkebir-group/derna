@@ -7,17 +7,35 @@
 #include "Zuker.h"
 #include "utils.h"
 #include "default.h"
+#include "codon_agg.h"
 #include "params/constants.h"
+
+// USE_CODON_LOOKUP_CLOSURE: compile-time flag to enable Step 3 closure rewrite.
+// 0 (default): existing Block 1 K_S × K_C × K_S iteration.
+// 1         : new closure that iterates 36-cell codon-pair agg grids (~5 populated
+//             cells per grid in practice). Both paths produce structurally-identical
+//             curr_c entries (differences allowed only via tied alternatives at equal
+//             score).
+#ifndef USE_CODON_LOOKUP_CLOSURE
+#define USE_CODON_LOOKUP_CLOSURE 0
+#endif
 #include <algorithm>
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <mutex>
+#include <numeric>
+#include <set>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #ifdef _OPENMP
 #include <omp.h>
@@ -96,16 +114,204 @@ static inline bool xyv_lt(const XYVariant& a, const XYVariant& b) {
     return a.cai < b.cai;
 }
 
-static void update_derna(DernaBeamMap& m, int idx, double score, const BeamEntry& en) {
+// Insertion sort for small arrays. variants vector is capped at 36 and typical
+// size is 4-12, where insertion sort beats std::sort (introsort) by 2-3x due to
+// lower overhead. Stable and cache-friendly.
+template <typename It, typename Comp>
+static inline void insertion_sort_variants(It first, It last, Comp lt) {
+    for (It i = first + 1; i < last; ++i) {
+        auto key = std::move(*i);
+        It j = i;
+        while (j > first && lt(key, *(j - 1))) {
+            *j = std::move(*(j - 1));
+            --j;
+        }
+        *j = std::move(key);
+    }
+}
+
+// Seed a freshly-inserted map entry with its first (x, y) variant. Extracted
+// so batch callers that already hold an iterator can skip the hash lookup.
+static inline void _update_derna_seed(BeamEntry& entry, double score, const BeamEntry& en) {
+    for (auto& row : entry.variant_idx) for (auto& v2 : row) v2 = -1;
+    entry.variants.clear();
+    entry.variants.emplace_back(en.x, en.y, en.mfe, en.cai, score,
+                                en.backtrace_type, en.last_closed_nuc, en.bt_info);
+    fill_variant_cs_fields(entry.variants.back(), en);
+    if (en.x >= 0 && en.x < 6 && en.y >= 0 && en.y < 6)
+        entry.variant_idx[en.x][en.y] = 0;
+}
+
+// Body of update_derna for an existing map entry (no try_emplace). Extracted so
+// batch callers can reuse after hoisting the hash lookup outside an inner loop.
+static void _update_derna_existing(BeamEntry& ex, double score, const BeamEntry& en);
+
+// Returns true iff a new slot was created in the map (caller can append idx to a
+// task_order log without a second find()).
+static bool update_derna(DernaBeamMap& m, int idx, double score, const BeamEntry& en) {
     auto [it, inserted] = m.try_emplace(idx, en);
     if (inserted) {
-        // New structural state: seed variants with this first codon pair.
-        it->second.variants.emplace_back(en.x, en.y, en.mfe, en.cai, score,
-                                         en.backtrace_type, en.last_closed_nuc, en.bt_info);
-        fill_variant_cs_fields(it->second.variants.back(), en);
-        return;
+        _update_derna_seed(it->second, score, en);
+        return true;
     }
+    _update_derna_existing(it->second, score, en);
+    return false;
+}
+
+// OPT2: variant of update_derna for hot-path callers (Block 1 emit_rb / emit_il).
+// Avoids the implicit copy of `en` at try_emplace and the redundant variant_idx
+// loop reset in _update_derna_seed (the just-default-constructed entry already
+// has variant_idx = -1 from BeamEntry's class default initializer). On insert we
+// only write the fields the emit lambdas actually set; everything else stays at
+// the default ctor's -1 / -1LL, which is what the prior path also produced.
+//
+// IMPORTANT: do not use this from callers whose `en` carries non-default
+// last_closed_nuc / cs_inner_key / cs_right_s_key / cs_pack_outer — emit_rb /
+// emit_il leave those at -1 / -1LL, which matches the default ctor.
+static bool update_derna_fresh_scratch(DernaBeamMap& m, int idx, double score, const BeamEntry& en) {
+    auto [it, inserted] = m.try_emplace(idx);
     BeamEntry& ex = it->second;
+    if (inserted) {
+        // Default-constructed in place: variant_idx is already all -1. Write
+        // only the fields that emit_rb / emit_il populate.
+        ex.score = score;
+        ex.mfe = en.mfe; ex.cai = en.cai;
+        ex.a = en.a; ex.b = en.b;
+        ex.i = en.i; ex.j = en.j;
+        ex.x = en.x; ex.y = en.y;
+        ex.backtrace_type = en.backtrace_type;
+        ex.bt_info = en.bt_info;
+        ex.cs_inner_left   = en.cs_inner_left;
+        ex.cs_right_len    = en.cs_right_len;
+        ex.cs_single_start = en.cs_single_start;
+        ex.cs_inner_right  = en.cs_inner_right;
+        // Seed variant 0; skip the redundant variant_idx-loop reset.
+        ex.variants.emplace_back(en.x, en.y, en.mfe, en.cai, score,
+                                 en.backtrace_type, en.last_closed_nuc, en.bt_info);
+        fill_variant_cs_fields(ex.variants.back(), en);
+        if (en.x >= 0 && en.x < 6 && en.y >= 0 && en.y < 6)
+            ex.variant_idx[en.x][en.y] = 0;
+        return true;
+    }
+    _update_derna_existing(ex, score, en);
+    return false;
+}
+
+// VARDIST diagnostic counters (Phase 0a). Only updated when DERNA_VARDIST_DIAG=1.
+// linear_find_calls = enters the (x<0 || x>=6) fallback branch in _update_derna_existing.
+// fast_path_calls   = uses variant_idx[x][y] O(1) lookup.
+struct VarDistDiag {
+    uint64_t fast_path_calls = 0;
+    uint64_t linear_find_calls = 0;
+};
+static thread_local VarDistDiag g_vardist_diag;
+static std::mutex g_vardist_diag_mu;
+static VarDistDiag g_vardist_diag_total;
+static bool vardist_diag_enabled() {
+    static const bool v = []() {
+        const char* e = std::getenv("DERNA_VARDIST_DIAG");
+        return e && e[0] == '1';
+    }();
+    return v;
+}
+
+// VARDIST: TSV output stream for per-pos variants distribution stats.
+// Opened lazily on first write; closed at end of fill_position_beam_tables.
+static std::ofstream s_vardist_tsv;
+static void vardist_open_tsv_if_needed() {
+    if (!vardist_diag_enabled()) return;
+    if (s_vardist_tsv.is_open()) return;
+    s_vardist_tsv.open("/tmp/derna_variants_dist.tsv", std::ios::out);
+    if (s_vardist_tsv.is_open()) {
+        s_vardist_tsv << "pos\ttable\ttotal_states\ttotal_variants\tavg_variants\tmax_variants"
+                         "\tavg_buckets_used\tavg_variants_per_bucket\n";
+    }
+}
+
+// Measure variants[] distribution across all entries of a DernaBeamMap, treating
+// each variant's (nuc_lo, nuc_ro) bucket as an integer 0..15 derived from the
+// variant's own (x,y) and the entry's structural protein/codon-slot indices.
+//
+// Reports (pos, table, total_states, total_variants, avg_variants, max_variants,
+// avg_buckets_used, avg_variants_per_bucket).
+//
+// avg_buckets_used: for each state, count distinct (nuc_lo, nuc_ro) bins among its
+// variants, then average across populated states. <= 1 means partitioning by
+// boundary nucs would NOT split any state — i.e., the state is already
+// effectively partitioned.
+//
+// avg_variants_per_bucket: under the proposed boundary-nuc partitioning, average
+// variants[] size per resulting sub-state.
+static void vardist_measure_map(int pos, const char* table_name,
+                                const DernaBeamMap& m,
+                                const std::vector<int>& protein) {
+    if (!vardist_diag_enabled()) return;
+    if (m.empty()) return;
+    vardist_open_tsv_if_needed();
+    if (!s_vardist_tsv.is_open()) return;
+
+    uint64_t total_states = 0;
+    uint64_t total_variants = 0;
+    uint64_t sum_buckets_used = 0;
+    uint64_t sum_subbuckets = 0;  // sum over (state, bucket) of variants_in_bucket
+    uint64_t sum_subbucket_count = 0;  // # of nonempty (state, bucket) pairs
+    uint64_t max_variants = 0;
+
+    for (const auto& kv : m) {
+        const BeamEntry& e = kv.second;
+        if (e.variants.empty()) continue;
+        total_states++;
+        total_variants += e.variants.size();
+        if (e.variants.size() > max_variants) max_variants = e.variants.size();
+
+        // Bucket variants by (nuc_lo, nuc_ro).
+        uint8_t bucket_count[16] = {0};
+        for (const auto& v : e.variants) {
+            // Skip uninitialized/special (-1) variants defensively.
+            if (v.x < 0 || v.x >= 6 || v.y < 0 || v.y >= 6) continue;
+            // protein[a] and protein[b] indices, with i,j slots.
+            int paa = protein[e.a];
+            int pbb = protein[e.b];
+            int nlo = nucleotides[paa][v.x][e.i];
+            int nro = nucleotides[pbb][v.y][e.j];
+            int b = nlo * 4 + nro;
+            if (b >= 0 && b < 16) bucket_count[b]++;
+        }
+        int buckets_used = 0;
+        for (int b = 0; b < 16; ++b) {
+            if (bucket_count[b] > 0) {
+                buckets_used++;
+                sum_subbuckets += bucket_count[b];
+                sum_subbucket_count++;
+            }
+        }
+        sum_buckets_used += buckets_used;
+    }
+
+    if (total_states == 0) return;
+    double avg_variants = (double)total_variants / (double)total_states;
+    double avg_buckets_used = (double)sum_buckets_used / (double)total_states;
+    double avg_variants_per_bucket = (sum_subbucket_count > 0)
+        ? (double)sum_subbuckets / (double)sum_subbucket_count : 0.0;
+
+    s_vardist_tsv << pos << "\t" << table_name
+                  << "\t" << total_states
+                  << "\t" << total_variants
+                  << "\t" << avg_variants
+                  << "\t" << max_variants
+                  << "\t" << avg_buckets_used
+                  << "\t" << avg_variants_per_bucket << "\n";
+}
+
+// Forward decl: defined after DenseBeamTable struct below.
+struct DenseBeamTable;
+static void vardist_measure_dense(int pos, const char* table_name,
+                                  const DenseBeamTable& td,
+                                  const std::vector<int>& key_order,
+                                  const std::vector<int>& protein);
+
+// Implementation of the existing-entry variant update (post-try_emplace logic).
+static void _update_derna_existing(BeamEntry& ex, double score, const BeamEntry& en) {
     // Helper to propagate ALL top-level fields from `en` when `en` becomes the new best.
     // CRITICAL: cs_* metadata fields must be copied along with bt_info, otherwise
     // the new bt_info points to predecessors described by the OLD cs_* fields,
@@ -123,7 +329,6 @@ static void update_derna(DernaBeamMap& m, int idx, double score, const BeamEntry
         ex.cs_inner_key    = en.cs_inner_key;
         ex.cs_right_s_key  = en.cs_right_s_key;
         ex.cs_pack_outer   = en.cs_pack_outer;
-        ex.cs_pack_inner_c = en.cs_pack_inner_c;
     };
     // Lex compare BtInfo: (len, data...) for deterministic tie-break.
     auto bt_lt = [](const BtInfo& a, const BtInfo& b) {
@@ -131,57 +336,298 @@ static void update_derna(DernaBeamMap& m, int idx, double score, const BeamEntry
         for (int k = 0; k < a.len; ++k) if (a.data[k] != b.data[k]) return a.data[k] < b.data[k];
         return false;
     };
-    // Search for existing (x,y) variant.
-    for (auto& v : ex.variants) {
-        if (v.x == en.x && v.y == en.y) {
-            // Tie-break on equal score by (backtrace_type, bt_info) lexicographically
-            // so the chosen variant is independent of map iteration / insertion order.
-            bool replace = false;
-            if (score < v.score) replace = true;
-            else if (score == v.score) {
-                if (en.backtrace_type < v.backtrace_type) replace = true;
-                else if (en.backtrace_type == v.backtrace_type && bt_lt(en.bt_info, v.bt_info)) replace = true;
-            }
-            if (replace) {
-                v = XYVariant(en.x, en.y, en.mfe, en.cai, score,
-                              en.backtrace_type, en.last_closed_nuc, en.bt_info);
-                fill_variant_cs_fields(v, en);
-                if (score < ex.score ||
-                    (score == ex.score &&
-                     (en.backtrace_type < ex.backtrace_type ||
-                      (en.backtrace_type == ex.backtrace_type && bt_lt(en.bt_info, ex.bt_info)))))
-                    promote_to_best();
-                // Re-sort to maintain canonical variant order after score/bt change.
-                std::sort(ex.variants.begin(), ex.variants.end(), xyv_lt);
-            }
-            return;
+    // Direct (x,y) -> variants[] index lookup: O(1).
+    int vi = -1;
+    if (en.x >= 0 && en.x < 6 && en.y >= 0 && en.y < 6) {
+        vi = ex.variant_idx[en.x][en.y];
+        if (vardist_diag_enabled()) g_vardist_diag.fast_path_calls++;
+    } else {
+        if (vardist_diag_enabled()) g_vardist_diag.linear_find_calls++;
+        for (size_t k = 0; k < ex.variants.size(); ++k) {
+            if (ex.variants[k].x == en.x && ex.variants[k].y == en.y) { vi = (int)k; break; }
         }
     }
-    // New (x,y) for this structural state.
+    if (vi >= 0) {
+        XYVariant& v = ex.variants[vi];
+        bool replace = false;
+        if (score < v.score) replace = true;
+        else if (score == v.score) {
+            if (en.backtrace_type < v.backtrace_type) replace = true;
+            else if (en.backtrace_type == v.backtrace_type && bt_lt(en.bt_info, v.bt_info)) replace = true;
+        }
+        if (replace) {
+            v = XYVariant(en.x, en.y, en.mfe, en.cai, score,
+                          en.backtrace_type, en.last_closed_nuc, en.bt_info);
+            fill_variant_cs_fields(v, en);
+            if (score < ex.score ||
+                (score == ex.score &&
+                 (en.backtrace_type < ex.backtrace_type ||
+                  (en.backtrace_type == ex.backtrace_type && bt_lt(en.bt_info, ex.bt_info)))))
+                promote_to_best();
+            // OPT-VARIANT-INCR: in-place replacement keeps variants[vi] at the same
+            // index, so variant_idx[x][y]=vi is already correct. The previous
+            // insertion_sort_variants + variant_idx rebuild was for deterministic
+            // iteration order across runs, not correctness — variants are read
+            // index-agnostically (via variant_idx O(1) lookups or for-each),
+            // and VARIANT_CAP=36=6×6 means truncation never actually fires.
+        }
+        return;
+    }
+    // New (x,y) for this structural state. Append + record its index incrementally;
+    // no sort, no full variant_idx rebuild. Sizes can never exceed 36 (=6×6) since
+    // variants are uniquely keyed by (x,y).
+    int8_t new_idx = (int8_t)ex.variants.size();
     ex.variants.emplace_back(en.x, en.y, en.mfe, en.cai, score,
                              en.backtrace_type, en.last_closed_nuc, en.bt_info);
     fill_variant_cs_fields(ex.variants.back(), en);
     if (score < ex.score) promote_to_best();
-    // Canonical ordering: sort variants by (score,x,y,bt,...) so per-variant
-    // iteration order is independent of insertion order (i.e. of map hash order).
-    // Variant cap: keep only top-K. Since the sort key matches the cap criterion
-    // (score-dominated), a single stable sort + resize satisfies both.
-    constexpr size_t VARIANT_CAP = 8;
-    std::sort(ex.variants.begin(), ex.variants.end(), xyv_lt);
-    if (ex.variants.size() > VARIANT_CAP) {
-        ex.variants.resize(VARIANT_CAP);
-    }
+    if (en.x >= 0 && en.x < 6 && en.y >= 0 && en.y < 6)
+        ex.variant_idx[en.x][en.y] = new_idx;
 }
 
-// LCDS-style CS key: encodes (cs_inner_left, nuc_inner_L, nuc_outer_R, nuc_single_start, single_len).
-// cube=64 (4^3), sq=16 (4^2), base=4. Matches LCDSfold GetIndexCS (nuci_pair not in scalar key).
-static inline int cs_get_index(int inner_left, int nuc_inner_L, int nuc_outer_R, int nuc_single_start, int len) {
-    return inner_left * 64 * (SINGLE_MAX_LEN + 1)
-         + len        * 64
+// Batch-friendly variant: upsert map entry and apply update, given the caller has
+// already placed a template_entry. If the caller's iterator is provided via `hint_it`,
+// reuse that to avoid re-hashing.
+static inline DernaBeamMap::iterator update_derna_batch_upsert(
+    DernaBeamMap& m, int idx, double score, const BeamEntry& en,
+    std::vector<int>& order) {
+    auto [it, inserted] = m.try_emplace(idx, en);
+    if (inserted) {
+        _update_derna_seed(it->second, score, en);
+        order.push_back(idx);
+    } else {
+        _update_derna_existing(it->second, score, en);
+    }
+    return it;
+}
+
+// After the first call with a key, subsequent updates with the SAME key can
+// skip the hash lookup by using the iterator returned above.
+static inline void update_derna_batch_same_key(
+    DernaBeamMap::iterator it, double score, const BeamEntry& en) {
+    _update_derna_existing(it->second, score, en);
+}
+
+// BLK1_AGG_DIAG instrumentation: globals for measuring per-(idx,x,y) variant
+// slot redundancy on Block 1's emit path. Default OFF (zero overhead unless
+// the env var is set). When BLK1_AGG_DIAG=1, _update_derna_existing /
+// DenseBeamTable::update increment these counters; end-of-run logs report
+// avg/max redundancy and a wall-clock estimate of per-update cost.
+struct Blk1AggDiag {
+    uint64_t seed_calls = 0;            // new compact_idx (first hit)
+    uint64_t new_variant_calls = 0;     // existing idx, new (x,y)
+    uint64_t existing_variant_calls = 0;// existing idx AND existing (x,y) — redundant
+    uint64_t total_update_ns = 0;       // wall ns spent inside update()
+    uint64_t per_pos_max_redundancy = 0;// max hits-on-single-(idx,x,y)-slot seen
+};
+static thread_local Blk1AggDiag g_blk1_agg_diag;
+static std::vector<Blk1AggDiag> g_blk1_agg_diag_threads;
+static std::mutex g_blk1_agg_diag_mu;
+static bool blk1_agg_diag_enabled() {
+    static const bool v = []() {
+        const char* e = std::getenv("BLK1_AGG_DIAG");
+        return e && e[0] == '1';
+    }();
+    return v;
+}
+
+// Per-pos thread-local hit-count vector for the (compact_idx, x, y) slot, used
+// only when BLK1_AGG_DIAG=1. Sized to dense_cap * 36 and reset at pos start.
+// The (x,y) range is [0,6) each so per slot we use 36 sub-slots.
+static thread_local std::vector<uint8_t> g_blk1_agg_hits_per_xy;
+
+// DenseBeamTable: dense-vector replacement for DernaBeamMap on Block 1's
+// per-thread task_map hot path. The Block 1 emit lambdas key candidates by
+// nuc_key_c_nuc(left_pos, pos, nuc_lo, nuc_ro), which decomposes into a
+// per-pos compact index (left_pos*16 + nuc_lo*4 + nuc_ro). Per-pos peak
+// per-thread density is ~1000 entries (avg 233) and the dense address space
+// is at most nuc_len*16 (≈ 5712 for 1000-aa proteins) — much smaller than
+// the raw key span (~2M), so a dense vector with sentinel-score reset is
+// far cheaper than the unordered_dense::map's hash + insertion path.
+//
+// Reset semantics: only slots inserted since the last reset are zeroed
+// (via populated_keys_), so reset is O(populated) not O(capacity).
+//
+// NOT YET WIRED IN. Callers continue to use DernaBeamMap. This struct is
+// added in isolation to confirm compile correctness; Phase 2 will replace
+// the hot-path task_map with this and benchmark.
+struct DenseBeamTable {
+    std::vector<BeamEntry> data_;          // sized to capacity once; never shrinks
+    std::vector<int> populated_keys_;      // dense indices touched since last reset
+    int capacity_ = 0;
+
+    // Reset only the slots populated since the last reset. Optionally grow
+    // capacity if the new pos demands more. Slot reset uses `score = inf` as
+    // the sentinel for "unpopulated" to match BeamEntry's default ctor.
+    void reset(int new_capacity) {
+        if (new_capacity > capacity_) {
+            data_.resize(new_capacity);
+            capacity_ = new_capacity;
+        }
+        for (int k : populated_keys_) {
+            BeamEntry& slot = data_[k];
+            slot.variants.clear();
+            slot = BeamEntry{};  // reset to default-constructed (score = inf)
+        }
+        populated_keys_.clear();
+    }
+
+    bool is_populated(int idx) const {
+        return idx >= 0 && idx < capacity_ && data_[idx].score < inf;
+    }
+
+    BeamEntry& slot(int idx) { return data_[idx]; }
+    const BeamEntry& slot(int idx) const { return data_[idx]; }
+
+    int size() const { return (int)populated_keys_.size(); }
+
+    // Mirror of free-function update_derna for the dense-table path.
+    // Returns true iff a new slot was populated (caller can append idx to a
+    // task_order log without a second is_populated() call).
+    bool update(int idx, double score, const BeamEntry& en) {
+        BeamEntry& ex = data_[idx];
+        if (ex.score >= inf) {
+            // Unpopulated: copy en into the slot, then run the seed routine.
+            if (blk1_agg_diag_enabled()) {
+                auto t0 = std::chrono::steady_clock::now();
+                ex = en;
+                _update_derna_seed(ex, score, en);
+                populated_keys_.push_back(idx);
+                g_blk1_agg_diag.seed_calls++;
+                if (en.x >= 0 && en.x < 6 && en.y >= 0 && en.y < 6 &&
+                    !g_blk1_agg_hits_per_xy.empty()) {
+                    const size_t k = (size_t)idx * 36 + (size_t)en.x * 6 + (size_t)en.y;
+                    if (k < g_blk1_agg_hits_per_xy.size()) {
+                        uint8_t& h = g_blk1_agg_hits_per_xy[k];
+                        if (h < 255) h++;
+                        if (h > g_blk1_agg_diag.per_pos_max_redundancy)
+                            g_blk1_agg_diag.per_pos_max_redundancy = h;
+                    }
+                }
+                auto t1 = std::chrono::steady_clock::now();
+                g_blk1_agg_diag.total_update_ns +=
+                    (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                return true;
+            }
+            ex = en;
+            _update_derna_seed(ex, score, en);
+            populated_keys_.push_back(idx);
+            return true;
+        }
+        if (blk1_agg_diag_enabled()) {
+            auto t0 = std::chrono::steady_clock::now();
+            // Detect whether (x,y) is a NEW variant within this entry.
+            bool variant_existed = false;
+            if (en.x >= 0 && en.x < 6 && en.y >= 0 && en.y < 6) {
+                variant_existed = (ex.variant_idx[en.x][en.y] >= 0);
+            }
+            _update_derna_existing(ex, score, en);
+            if (variant_existed) g_blk1_agg_diag.existing_variant_calls++;
+            else                  g_blk1_agg_diag.new_variant_calls++;
+            if (en.x >= 0 && en.x < 6 && en.y >= 0 && en.y < 6 &&
+                !g_blk1_agg_hits_per_xy.empty()) {
+                const size_t k = (size_t)idx * 36 + (size_t)en.x * 6 + (size_t)en.y;
+                if (k < g_blk1_agg_hits_per_xy.size()) {
+                    uint8_t& h = g_blk1_agg_hits_per_xy[k];
+                    if (h < 255) h++;
+                    if (h > g_blk1_agg_diag.per_pos_max_redundancy)
+                        g_blk1_agg_diag.per_pos_max_redundancy = h;
+                }
+            }
+            auto t1 = std::chrono::steady_clock::now();
+            g_blk1_agg_diag.total_update_ns +=
+                (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+            return false;
+        }
+        _update_derna_existing(ex, score, en);
+        return false;
+    }
+};
+
+// VARDIST: defined here because it uses DenseBeamTable.
+static void vardist_measure_dense(int pos, const char* table_name,
+                                  const DenseBeamTable& td,
+                                  const std::vector<int>& key_order,
+                                  const std::vector<int>& protein) {
+    if (!vardist_diag_enabled()) return;
+    if (key_order.empty()) return;
+    vardist_open_tsv_if_needed();
+    if (!s_vardist_tsv.is_open()) return;
+
+    uint64_t total_states = 0;
+    uint64_t total_variants = 0;
+    uint64_t sum_buckets_used = 0;
+    uint64_t sum_subbuckets = 0;
+    uint64_t sum_subbucket_count = 0;
+    uint64_t max_variants = 0;
+
+    for (int compact_idx : key_order) {
+        const BeamEntry& e = td.slot(compact_idx);
+        if (e.score >= inf) continue;
+        if (e.variants.empty()) continue;
+        total_states++;
+        total_variants += e.variants.size();
+        if (e.variants.size() > max_variants) max_variants = e.variants.size();
+
+        uint8_t bucket_count[16] = {0};
+        for (const auto& v : e.variants) {
+            if (v.x < 0 || v.x >= 6 || v.y < 0 || v.y >= 6) continue;
+            int paa = protein[e.a];
+            int pbb = protein[e.b];
+            int nlo = nucleotides[paa][v.x][e.i];
+            int nro = nucleotides[pbb][v.y][e.j];
+            int b = nlo * 4 + nro;
+            if (b >= 0 && b < 16) bucket_count[b]++;
+        }
+        int buckets_used = 0;
+        for (int b = 0; b < 16; ++b) {
+            if (bucket_count[b] > 0) {
+                buckets_used++;
+                sum_subbuckets += bucket_count[b];
+                sum_subbucket_count++;
+            }
+        }
+        sum_buckets_used += buckets_used;
+    }
+
+    if (total_states == 0) return;
+    double avg_variants = (double)total_variants / (double)total_states;
+    double avg_buckets_used = (double)sum_buckets_used / (double)total_states;
+    double avg_variants_per_bucket = (sum_subbucket_count > 0)
+        ? (double)sum_subbuckets / (double)sum_subbucket_count : 0.0;
+
+    s_vardist_tsv << pos << "\t" << table_name
+                  << "\t" << total_states
+                  << "\t" << total_variants
+                  << "\t" << avg_variants
+                  << "\t" << max_variants
+                  << "\t" << avg_buckets_used
+                  << "\t" << avg_variants_per_bucket << "\n";
+}
+
+// LCDS-style CS key: encodes (cs_inner_left, nuc_inner_L, nuc_outer_R, nuc_single_start, nuc_jm1, single_len).
+// Packing layout (low → high bits):
+//   [bit 0-1]  nuc_single_start  (×1)         — first nuc of right_S
+//   [bit 2-3]  nuc_outer_R       (×4)         — inner-pair right
+//   [bit 4-5]  nuc_inner_L       (×16)        — inner-pair left
+//   [bit 6-7]  nuc_jm1           (×64)        — last nuc of right_S (= CS's last nuc)
+//   [bits 8+]  len               (×256)       — right_S length
+//   [highest]  inner_left        (×256*(SINGLE_MAX_LEN+1))
+// nuc_jm1 was added (2026-04-28) to prevent two CS entries with same boundary
+// nucleotides but different right-S last-nuc from collapsing — those two cases
+// produce different downstream loop_e energies in the CS_to_C closure (via
+// cs_best_by_y[cy].nuc_jm1, line ~1637) and must be kept separately.
+// The low-6-bit decoder at line ~1505 (key % 64) is unaffected by this addition.
+static inline int cs_get_index(int inner_left, int nuc_inner_L, int nuc_outer_R,
+                               int nuc_single_start, int nuc_jm1, int len) {
+    return inner_left * 256 * (SINGLE_MAX_LEN + 1)
+         + len        * 256
+         + nuc_jm1    * 64
          + nuc_inner_L * 16
          + nuc_outer_R *  4
          + nuc_single_start;
 }
+
 
 // Update CS table: keep best score; on tie, append (c_key,s_key) to bt_info; on worse, skip.
 [[maybe_unused]] static void update_cs(DernaBeamMap& m, int key, double score,
@@ -343,7 +789,19 @@ static std::ofstream s_prune_log;
 // Current protein (for logging nuc choices); set during fill.
 static const vector<int>* s_prune_protein = nullptr;
 
+// Dual-beam diagnostic CSV: full pre-prune candidate dump with rank under
+// combined-score, mfe-only, cai-only orderings. Opened only if env var
+// DERNA_DUMP_PRUNES is set (path).
+static std::ofstream s_dualbeam_csv;
+static int s_dualbeam_step_id = 0;
+
 static const char nuc_char[4] = {'A', 'C', 'G', 'U'};
+
+// Forward decl: helper to dump full ranking before pruning.
+static void dualbeam_dump_full(const DernaBeamMap& states,
+                               int beamsize, int pos, int n,
+                               const char* kind_name, int aux_len,
+                               const vector<vector<double>>* best_f_prefix);
 
 // Human-readable name for transition/manner (which transition produced this state).
 static const char* manner_name(int bt) {
@@ -376,6 +834,116 @@ static const char* manner_name(int bt) {
     }
 }
 
+// Dual-beam diagnostic dump: emits one CSV row per candidate in `states`
+// (BEFORE pruning), with rank under combined-score / MFE / CAI orderings.
+// Combined-score = states[].score (lambda*mfe + (lambda-1)*cai), already what
+// the DP uses. MFE-only ranks by .mfe ascending. CAI-only ranks by .cai
+// ascending (i.e., lower CAI sum = "more negative" = closer to optimal CAI;
+// remember internally CAI is stored as a negative log-prob sum).
+static void dualbeam_dump_full(const DernaBeamMap& states,
+                               int beamsize, int pos, int n,
+                               const char* kind_name, int aux_len,
+                               const vector<vector<double>>* best_f_prefix) {
+    if (!s_dualbeam_csv.is_open() || states.empty()) return;
+    const int N = (int)states.size();
+    s_dualbeam_step_id++;
+    const int step_id = s_dualbeam_step_id;
+
+    // Materialize candidates so we can compute three rankings.
+    struct Cand {
+        int key;
+        double score;   // combined
+        double mfe;
+        double cai;
+        int a, b;
+        int8_t i_, j_;
+        int x, y;
+        int left_pos, right_pos;
+        int manner;
+    };
+    std::vector<Cand> cands;
+    cands.reserve(N);
+    for (const auto& kv : states) {
+        const auto& e = kv.second;
+        Cand c;
+        c.key = kv.first;
+        c.score = e.score;
+        c.mfe = e.mfe;
+        c.cai = e.cai;
+        c.a = e.a; c.b = e.b;
+        c.i_ = e.i; c.j_ = e.j;
+        c.x = e.x; c.y = e.y;
+        c.left_pos = (e.a >= 0) ? sigma(e.a, e.i) : -1;
+        c.right_pos = (e.b >= 0) ? sigma(e.b, e.j) : pos;
+        c.manner = e.backtrace_type;
+        cands.push_back(c);
+    }
+    // Compute ranks: lower is better for all three (combined, mfe, cai).
+    auto rank_under = [&](auto field) {
+        std::vector<int> idx(N);
+        std::iota(idx.begin(), idx.end(), 0);
+        std::sort(idx.begin(), idx.end(),
+                  [&](int a, int b) {
+                      double va = field(cands[a]);
+                      double vb = field(cands[b]);
+                      if (va != vb) return va < vb;
+                      return cands[a].key < cands[b].key;
+                  });
+        std::vector<int> rank(N);
+        for (int r = 0; r < N; ++r) rank[idx[r]] = r + 1;
+        return rank;
+    };
+    auto rank_combined = rank_under([](const Cand& c) { return c.score; });
+    auto rank_mfe = rank_under([](const Cand& c) { return c.mfe; });
+    auto rank_cai = rank_under([](const Cand& c) { return c.cai; });
+
+    // Optional cumulative-score (for C/M1/M2/Multi where prune_cumulative is used).
+    std::vector<int> rank_cum;
+    if (best_f_prefix) {
+        const int np = (int)best_f_prefix->size();
+        auto cum_of = [&](const Cand& c) -> double {
+            int prev = c.left_pos - 1;
+            if (prev < 0 || prev >= np) return c.score;
+            double best = inf;
+            for (int y = 0; y < 4; ++y)
+                if (std::isfinite((*best_f_prefix)[prev][y]))
+                    best = std::min(best, (*best_f_prefix)[prev][y]);
+            return (best < inf) ? best + c.score : c.score;
+        };
+        std::vector<int> idx(N);
+        std::iota(idx.begin(), idx.end(), 0);
+        std::sort(idx.begin(), idx.end(),
+                  [&](int a, int b) {
+                      double va = cum_of(cands[a]);
+                      double vb = cum_of(cands[b]);
+                      if (va != vb) return va < vb;
+                      return cands[a].key < cands[b].key;
+                  });
+        rank_cum.assign(N, 0);
+        for (int r = 0; r < N; ++r) rank_cum[idx[r]] = r + 1;
+    }
+
+    for (int idx = 0; idx < N; ++idx) {
+        const Cand& c = cands[idx];
+        s_dualbeam_csv
+            << step_id << ',' << kind_name << ',' << pos << ',' << aux_len
+            << ',' << beamsize << ',' << N
+            << ',' << c.left_pos << ',' << c.right_pos
+            << ',' << c.a << ',' << c.b
+            << ',' << (int)c.i_ << ',' << (int)c.j_
+            << ',' << c.x << ',' << c.y
+            << ',' << c.key << ',' << c.manner
+            << ',' << c.score << ',' << c.mfe << ',' << c.cai
+            << ',' << rank_combined[idx]
+            << ',' << rank_mfe[idx]
+            << ',' << rank_cai[idx]
+            << ',' << (rank_cum.empty() ? -1 : rank_cum[idx])
+            << ',' << ((rank_combined[idx] <= beamsize) ? 1 : 0)
+            << '\n';
+    }
+    (void)n;
+}
+
 // Cumulative-score pruning for the C table: rank by best_f_prefix[left_pos-1] + local_score.
 // This matches LCDSfold's BeamPrune which uses bestF[i-1] + cand.score as the effective score,
 // so that globally-promising C entries survive even if their local score is not the best.
@@ -393,6 +961,22 @@ static void prune_cumulative(DernaBeamMap& states,
         if (!std::isfinite(it->second.score) || !entry_is_position_consistent(it->second, pos, n, kind, aux_len))
             it = states.erase(it);
         else ++it;
+    }
+    // Diagnostic: dump full pre-prune ranking under combined / mfe / cai / cum.
+    if (s_dualbeam_csv.is_open()) {
+        const char* kn = "?";
+        switch (kind) {
+            case DernaTableKind::N: kn = "N"; break;
+            case DernaTableKind::S: kn = "S"; break;
+            case DernaTableKind::F: kn = "F"; break;
+            case DernaTableKind::C: kn = "C"; break;
+            case DernaTableKind::CS: kn = "CS"; break;
+            case DernaTableKind::M1: kn = "M1"; break;
+            case DernaTableKind::M2: kn = "M2"; break;
+            case DernaTableKind::Multi: kn = "Multi"; break;
+            default: break;
+        }
+        dualbeam_dump_full(states, beamsize, pos, n, kn, aux_len, &best_f_prefix);
     }
     if (beamsize <= 0 || states.size() <= (size_t)beamsize) return;
 
@@ -435,6 +1019,277 @@ static void prune_cumulative(DernaBeamMap& states,
     }
 }
 
+// Pack (closed_right, seg_len, s_right_key, c_inner_key) into a uint64_t for
+// the per-pos "Block 1 fallback needed" set. closed_right uses 12 bits;
+// seg_len uses 5 bits; s_right_key 24 bits; c_inner_key 23 bits = 64 bits.
+// Sufficient for current SINGLE_MAX_LEN=30 and protein lengths up to ~1300.
+static inline uint64_t pack_cs_blk1_unit(int closed_right, int seg_len,
+                                         int s_right_key, int c_inner_key) {
+    return ((uint64_t)(closed_right & 0xFFF) << 52) |
+           ((uint64_t)(seg_len & 0x1F) << 47) |
+           ((uint64_t)(s_right_key & 0xFFFFFF) << 23) |
+           ((uint64_t)(c_inner_key & 0x7FFFFF));
+}
+
+// Hybrid prune for CS: keep the union of top-K by raw-score AND top-K by
+// cumulative (bestF[cs_il-1] + score). The pure cumulative prune drops CS
+// entries with high cs_il (large inner_left), because their bestF lookahead
+// is from far back in the sequence and can't compete with low-cs_il entries
+// whose score has already absorbed huge negative MFE from prior closures.
+// Verified failure on P01707: an internal-loop CS entry at cs_il=30 with
+// score=-339.659 was pruned (cum=-1938.05, threshold@K=-3386.6) even though
+// its closure produces a globally optimal C entry. Block 1 historically
+// recovered this combination by enumerating raw-score top entries directly.
+//
+// Hybrid prune restores raw-score top-K, lossless against Block 1's path on
+// the validated 19-case sweep (see Phase 4 in feedback_cs_path_coverage.md).
+//
+// If dropped_blk1_units is non-null, the prune logs the packed
+// (closed_right, seg_len, s_right_key, c_inner_key) tuple of every CS entry
+// that was dropped — the consumer can use this to restrict Block 1's work to
+// only the (closed_right, seg_len, s_key, c_key) units whose CS coverage was
+// lost (selective Block 1).
+static void prune_cs_hybrid(DernaBeamMap& states,
+                            int beamsize,
+                            int pos,
+                            int n,
+                            const vector<vector<double>>& best_f_prefix,
+                            const vector<int>& protein,
+                            std::unordered_set<uint64_t>* dropped_blk1_units = nullptr) {
+    if (states.empty()) return;
+    // Validity: drop non-finite scores or position-inconsistent entries.
+    for (auto it = states.begin(); it != states.end();) {
+        if (!std::isfinite(it->second.score) ||
+            !entry_is_position_consistent(it->second, pos, n, DernaTableKind::CS, -1))
+            it = states.erase(it);
+        else ++it;
+    }
+    if (beamsize <= 0 || states.size() <= (size_t)(2 * beamsize)) return;
+
+    const int np = (int)best_f_prefix.size();
+    auto cum = [&](const BeamEntry& e) -> double {
+        int left_pos = sigma(e.a, e.i);
+        int prev = left_pos - 1;
+        if (prev < 0 || prev >= np) return e.score;
+        double best = inf;
+        for (int y = 0; y < 4; ++y)
+            if (std::isfinite(best_f_prefix[prev][y]))
+                best = std::min(best, best_f_prefix[prev][y]);
+        return (best < inf) ? best + e.score : e.score;
+    };
+    (void)protein;
+
+    // Compute (raw, cum, key) for every entry and sort once for each metric.
+    std::vector<int> all_keys; all_keys.reserve(states.size());
+    std::vector<double> raw_scores; raw_scores.reserve(states.size());
+    std::vector<double> cum_scores; cum_scores.reserve(states.size());
+    for (const auto& kv : states) {
+        all_keys.push_back(kv.first);
+        raw_scores.push_back(kv.second.score);
+        cum_scores.push_back(cum(kv.second));
+    }
+    // Find top-K by raw via partial sort of indices.
+    std::vector<int> idx_raw(all_keys.size()), idx_cum(all_keys.size());
+    std::iota(idx_raw.begin(), idx_raw.end(), 0);
+    std::iota(idx_cum.begin(), idx_cum.end(), 0);
+    auto raw_lt = [&](int a, int b) {
+        if (raw_scores[a] != raw_scores[b]) return raw_scores[a] < raw_scores[b];
+        return all_keys[a] < all_keys[b];
+    };
+    auto cum_lt = [&](int a, int b) {
+        if (cum_scores[a] != cum_scores[b]) return cum_scores[a] < cum_scores[b];
+        return all_keys[a] < all_keys[b];
+    };
+    std::nth_element(idx_raw.begin(), idx_raw.begin() + beamsize, idx_raw.end(), raw_lt);
+    std::nth_element(idx_cum.begin(), idx_cum.begin() + beamsize, idx_cum.end(), cum_lt);
+    std::unordered_set<int> keep_keys;
+    keep_keys.reserve(2 * beamsize);
+    for (int i = 0; i < beamsize; ++i) keep_keys.insert(all_keys[idx_raw[i]]);
+    for (int i = 0; i < beamsize; ++i) keep_keys.insert(all_keys[idx_cum[i]]);
+    for (auto it = states.begin(); it != states.end();) {
+        if (keep_keys.count(it->first) == 0) {
+            // Log this tuple as needing Block 1 fallback at the next pos.
+            if (dropped_blk1_units) {
+                const BeamEntry& e = it->second;
+                if (e.cs_inner_key >= 0 && e.cs_right_s_key >= 0 &&
+                    e.cs_right_len > 0 && e.cs_inner_right >= 0) {
+                    dropped_blk1_units->insert(pack_cs_blk1_unit(
+                        e.cs_inner_right, e.cs_right_len,
+                        e.cs_right_s_key, e.cs_inner_key));
+                }
+            }
+            it = states.erase(it);
+        }
+        else ++it;
+    }
+}
+
+// Lookahead-aware CS prune (Approach a): rank CS entries by an estimate of
+// their post-closure score, not raw or cumulative.
+//
+// Lookahead score:
+//   L(cs) = bestF[cs.cs_inner_left - 1] + cs.score + min_sl_at[cs.cs_inner_left - 1]
+//
+// where min_sl_at[p] = min over (seg_len, key) of bestS[p][seg_len][key].score
+// — i.e. the best left-S contribution that would be available if we eventually
+// close cs into C via S_CS_to_C with S_left ending at cs_il-1. Since S scores
+// are non-positive, min_sl_at[p] is a stricter (better) lookahead than 0.
+//
+// This is a stricter (more pessimistic, i.e. larger) ranking than raw score
+// since it adds bestF[cs_il-1] and min_sl_at[cs_il-1] (both non-positive),
+// hopefully selecting CS entries that produce better C closures.
+//
+// Used in conjunction with raw and cumulative metrics to form a 3-way hybrid.
+// If dropped_blk1_units is non-null, dropped tuples are logged as in
+// prune_cs_hybrid.
+static void prune_cs_hybrid_lookahead(
+        DernaBeamMap& states,
+        int beamsize,
+        int pos,
+        int n,
+        const vector<vector<double>>& best_f_prefix,
+        const vector<double>& min_sl_at,
+        const vector<int>& protein,
+        std::unordered_set<uint64_t>* dropped_blk1_units = nullptr) {
+    if (states.empty()) return;
+    for (auto it = states.begin(); it != states.end();) {
+        if (!std::isfinite(it->second.score) ||
+            !entry_is_position_consistent(it->second, pos, n, DernaTableKind::CS, -1))
+            it = states.erase(it);
+        else ++it;
+    }
+    if (beamsize <= 0 || states.size() <= (size_t)(3 * beamsize)) return;
+    (void)protein;
+
+    const int np = (int)best_f_prefix.size();
+    auto cum = [&](const BeamEntry& e) -> double {
+        int left_pos = sigma(e.a, e.i);
+        int prev = left_pos - 1;
+        if (prev < 0 || prev >= np) return e.score;
+        double best = inf;
+        for (int y = 0; y < 4; ++y)
+            if (std::isfinite(best_f_prefix[prev][y]))
+                best = std::min(best, best_f_prefix[prev][y]);
+        return (best < inf) ? best + e.score : e.score;
+    };
+    auto lookahead = [&](const BeamEntry& e) -> double {
+        // cs_il = sigma(e.a, e.i); seam = cs_il - 1 = where S_left ends.
+        // F prefix is at cs_il - 1 (same as cum, since S_left "covers" that
+        // position when present). Use the cum baseline + min_sl bonus.
+        double base = cum(e);
+        if (!std::isfinite(base)) return base;
+        int cs_il = sigma(e.a, e.i);
+        int seam = cs_il - 1;
+        if (seam >= 0 && seam < (int)min_sl_at.size() && std::isfinite(min_sl_at[seam])) {
+            // S_left is non-positive; min_sl_at[seam] tightens the lookahead.
+            base += std::min(0.0, min_sl_at[seam]);
+        }
+        return base;
+    };
+
+    std::vector<int> all_keys; all_keys.reserve(states.size());
+    std::vector<double> raw_scores; raw_scores.reserve(states.size());
+    std::vector<double> cum_scores; cum_scores.reserve(states.size());
+    std::vector<double> la_scores; la_scores.reserve(states.size());
+    for (const auto& kv : states) {
+        all_keys.push_back(kv.first);
+        raw_scores.push_back(kv.second.score);
+        cum_scores.push_back(cum(kv.second));
+        la_scores.push_back(lookahead(kv.second));
+    }
+    auto take_topk = [&](const std::vector<double>& scs, std::unordered_set<int>& keep) {
+        std::vector<int> idx(all_keys.size());
+        std::iota(idx.begin(), idx.end(), 0);
+        auto lt = [&](int a, int b) {
+            if (scs[a] != scs[b]) return scs[a] < scs[b];
+            return all_keys[a] < all_keys[b];
+        };
+        std::nth_element(idx.begin(), idx.begin() + beamsize, idx.end(), lt);
+        for (int i = 0; i < beamsize; ++i) keep.insert(all_keys[idx[i]]);
+    };
+    std::unordered_set<int> keep_keys;
+    keep_keys.reserve(3 * beamsize);
+    take_topk(raw_scores, keep_keys);
+    take_topk(cum_scores, keep_keys);
+    take_topk(la_scores,  keep_keys);
+
+    for (auto it = states.begin(); it != states.end();) {
+        if (keep_keys.count(it->first) == 0) {
+            if (dropped_blk1_units) {
+                const BeamEntry& e = it->second;
+                if (e.cs_inner_key >= 0 && e.cs_right_s_key >= 0 &&
+                    e.cs_right_len > 0 && e.cs_inner_right >= 0) {
+                    dropped_blk1_units->insert(pack_cs_blk1_unit(
+                        e.cs_inner_right, e.cs_right_len,
+                        e.cs_right_s_key, e.cs_inner_key));
+                }
+            }
+            it = states.erase(it);
+        }
+        else ++it;
+    }
+}
+
+// Hybrid prune for SCLeft: keep the union of top-(M*K) by raw-score and
+// top-(M*K) by cumulative-score (raw + best_f_prefix[outer_left_nuc - 1]).
+//
+// Why hybrid + multiplier: SCLeft entries have unique (negative) keys so they
+// don't merge; without a cap, |SCLeft| blows up. Pure raw-score top-K dropped
+// the optimum's predecessor for some instances (P01707). Pure cumulative-score
+// top-K biases against entries with outer pair near position 0 (tiny F-prefix
+// → looks worse than deep-F-prefix entries). Hybrid at 1*K still missed P01707
+// because the optimum's SCLeft was below rank K by BOTH metrics. Multiplier
+// M relaxes the cap to admit more candidates while still bounding runtime.
+constexpr int SC_LEFT_PRUNE_MULTIPLIER = 3;
+static void prune_sc_left_hybrid(DernaBeamMap& states,
+                                 int beamsize,
+                                 const vector<vector<double>>& best_f_prefix) {
+    if (states.empty()) return;
+    // Validity: drop non-finite scores.
+    for (auto it = states.begin(); it != states.end();) {
+        if (!std::isfinite(it->second.score)) it = states.erase(it);
+        else ++it;
+    }
+    if (beamsize <= 0) return;
+    const int eff_k = beamsize * SC_LEFT_PRUNE_MULTIPLIER;
+    if (states.size() <= (size_t)(2 * eff_k)) return;
+
+    const int np = (int)best_f_prefix.size();
+    auto cum = [&](const BeamEntry& e) -> double {
+        // sigma(e.a, e.i) = s_left_start; eventual outer_left_nuc = s_left_start - 1.
+        // F-prefix lookahead is at outer_left_nuc - 1 = sigma(e.a, e.i) - 2.
+        int prev = sigma(e.a, e.i) - 2;
+        if (prev < 0 || prev >= np) return e.score;
+        double best = inf;
+        for (int y = 0; y < 4; ++y)
+            if (std::isfinite(best_f_prefix[prev][y]))
+                best = min(best, best_f_prefix[prev][y]);
+        return (best < inf) ? best + e.score : e.score;
+    };
+
+    // Build keep-set: top-(M*K) by raw, plus top-(M*K) by cumulative.
+    std::unordered_set<int> keep;
+    keep.reserve((size_t)(2 * eff_k));
+    auto take_top_k = [&](auto score_fn) {
+        vector<pair<double, int>> vals;
+        vals.reserve(states.size());
+        for (const auto& kv : states) vals.push_back({score_fn(kv.second), kv.first});
+        auto nth = vals.begin() + (eff_k - 1);
+        std::nth_element(vals.begin(), nth, vals.end(),
+                         [](const auto& a, const auto& b) {
+                             if (a.first != b.first) return a.first < b.first;
+                             return a.second < b.second;
+                         });
+        for (auto it = vals.begin(); it <= nth; ++it) keep.insert(it->second);
+    };
+    take_top_k([](const BeamEntry& e) { return e.score; });
+    take_top_k([&](const BeamEntry& e) { return cum(e); });
+    for (auto it = states.begin(); it != states.end();) {
+        if (keep.count(it->first) == 0) it = states.erase(it);
+        else ++it;
+    }
+}
+
 static void prune_beam_derna_checked(DernaBeamMap& states,
                                     int beamsize,
                                     int pos,
@@ -448,6 +1303,23 @@ static void prune_beam_derna_checked(DernaBeamMap& states,
     for (auto it = states.begin(); it != states.end();) {
         if (!entry_is_position_consistent(it->second, pos, n, kind, aux_len)) it = states.erase(it);
         else ++it;
+    }
+
+    // Diagnostic: dump full pre-prune ranking.
+    if (s_dualbeam_csv.is_open()) {
+        const char* kn = "?";
+        switch (kind) {
+            case DernaTableKind::N: kn = "N"; break;
+            case DernaTableKind::S: kn = "S"; break;
+            case DernaTableKind::F: kn = "F"; break;
+            case DernaTableKind::C: kn = "C"; break;
+            case DernaTableKind::CS: kn = "CS"; break;
+            case DernaTableKind::M1: kn = "M1"; break;
+            case DernaTableKind::M2: kn = "M2"; break;
+            case DernaTableKind::Multi: kn = "Multi"; break;
+            default: break;
+        }
+        dualbeam_dump_full(states, beamsize, pos, n, kn, aux_len, nullptr);
     }
 
     // 2) Top-k by score (minimize) [MEK: and break ties using the key].
@@ -889,6 +1761,23 @@ static inline int nuc_key_c_nuc(int left_pos, int right_pos, int nuc_lo, int nuc
     return (left_pos * nuc_len + right_pos) * 16 + nuc_lo * 4 + nuc_ro;
 }
 
+// Structural+nucleotide key for SCLeft entries. Two SCLeft entries with the same
+// (s_left_start, seg_len_left, nuc_li, nuc_ri, nuc_i1, nuc_pm1) can merge: they
+// have identical closure energy at MANNER_SCLefttoC, so per (key, x=svar.x, y=cvar.y)
+// we keep the best (mfe, cai). c_inner_left is derived (= s_left_start + seg_len_left).
+// Layout (msb→lsb): [13: s_left_start][5: seg_len_left][2: nuc_li][2: nuc_ri][2: nuc_i1][2: nuc_pm1]
+// = 26 bits, fits in non-negative int (so it does not collide with negative-key
+// schemes elsewhere).
+static inline int sc_left_key_encode(int s_left_start, int seg_len_left,
+                                     int nuc_li, int nuc_ri, int nuc_i1, int nuc_pm1) {
+    return  ((s_left_start & 0x1FFF) << 13)
+          | ((seg_len_left & 0x1F) << 8)
+          | ((nuc_li & 0x3) << 6)
+          | ((nuc_ri & 0x3) << 4)
+          | ((nuc_i1 & 0x3) << 2)
+          | (nuc_pm1 & 0x3);
+}
+
 // Right-bound nucleotide position (sigma(b,j) = pos at fill time) decoded from a nuc_key_c_nuc key.
 static inline int nuc_key_c_to_close(int key, int nuc_len) {
     return (key / 16) % nuc_len;
@@ -913,6 +1802,19 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
     if (s_prune_log.is_open())
         s_prune_log << "--- position_beam_prune.log (top 20 per prune: score, mfe, cai, a, b, i, j, x, y, n, nucL, nucR, manner, from_keys) ---\n";
 #endif
+    // Dual-beam diagnostic CSV (env DERNA_DUMP_PRUNES=path).
+    if (const char* env_path = std::getenv("DERNA_DUMP_PRUNES")) {
+        s_dualbeam_csv.open(env_path, std::ios::out);
+        s_prune_protein = &protein;
+        s_dualbeam_step_id = 0;
+        if (s_dualbeam_csv.is_open()) {
+            s_dualbeam_csv << "step,table,pos,aux_len,beamsize,n_cands,"
+                              "left_pos,right_pos,a,b,i,j,x,y,key,manner,"
+                              "score,mfe,cai,"
+                              "rank_combined,rank_mfe,rank_cai,rank_cum,kept_in_topk\n";
+            std::cerr << "[dualbeam-diag] dumping prune candidates to " << env_path << "\n";
+        }
+    }
 
     auto& tab_n = tables.bestN;
     auto& tab_s = tables.bestS;
@@ -934,6 +1836,14 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
     tab_m1.resize(nuc_len);
     tab_m2.resize(nuc_len);
     tab_multi.resize(nuc_len);
+
+    // ---- Codon-pair aggregation infrastructure (Step 1-2 of closure refactor) ----
+    // s_agg[pos][seg_len][key] / c_agg[pos][key] are populated AFTER final pruning
+    // at each position. Currently BUILT but not yet CONSUMED — closure logic is
+    // unchanged. See codon_agg.h for design.
+    CodonAggTables agg_tables;
+    agg_tables.resize(nuc_len, SINGLE_MAX_LEN + 1);
+    const bool agg_diag_on = agg_diag_enabled();
 
     // ---------- Base case at position 0 ----------
     int aa0 = 0, ii0 = 0, slot0 = 0;
@@ -958,6 +1868,36 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
     const double inf_f = std::numeric_limits<double>::infinity();
     const int max_nucs = 4;
     vector<vector<double>> best_f_prefix(nuc_len, vector<double>(max_nucs, inf_f));
+    // Lookahead-aware CS prune (Approach a): per-pos min S_left score ending
+    // at p. Updated incrementally after the S table at pos p is built each
+    // iteration, before the CS prune at pos p reads it.
+    vector<double> min_sl_at_pos(nuc_len, std::numeric_limits<double>::infinity());
+    // Seed pos 0 from base-case S entries.
+    if (nuc_len > 0 && tab_s[0].size() > 1) {
+        for (int seg_len = 1; seg_len < (int)tab_s[0].size(); ++seg_len) {
+            for (const auto& kv : tab_s[0][seg_len]) {
+                if (std::isfinite(kv.second.score) && kv.second.score < min_sl_at_pos[0])
+                    min_sl_at_pos[0] = kv.second.score;
+            }
+        }
+    }
+
+    // Selective Block 1 (Approach c): per-pos dropped_tuples set.
+    // CS entries dropped by the CS prune at pos N → packed
+    // (closed_right, seg_len, s_right_key, c_inner_key) tuple. Block 1 at
+    // pos N+1 only enumerates (c_kv, s_rkv) tuples that ARE in this set,
+    // since those are the only tuples whose CS coverage was lost.
+    //
+    // Tuples NOT in this set fall into two categories — both safe to skip:
+    //   (a) covered: their CS entry survived, so CS_to_C / S_CS_to_C will close
+    //       them at pos+1 (with iv-wrap completing the inner-C variant span).
+    //   (b) non-producer: their (c_key, s_key) failed geometry checks in
+    //       C+S→CS, so no CS entry was ever produced — Block 1 has no useful
+    //       work to do for them either (its own geometry filter would skip).
+    //
+    // tab_cs_selective_active[N] = whether selective filtering is valid at N.
+    vector<std::unordered_set<uint64_t>> tab_cs_dropped_units(nuc_len);
+    vector<bool> tab_cs_selective_active(nuc_len, false);
     // Seed position 0 F score from base-case entries.
     for (const auto& kv : tab_f[0]) {
         int nuc_r = nucleotides[protein[kv.second.b]][kv.second.y][kv.second.j];
@@ -975,6 +1915,41 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
     uint64_t cnt_F_EtoF = 0, cnt_C_to_F = 0, cnt_F_C_to_F = 0;
     uint64_t cnt_SC_left_build = 0, cnt_SCLeft_to_C = 0;
     uint64_t cnt_blk1_rightbulge = 0, cnt_blk1_internal = 0;
+    uint64_t blk1_c_kv_kept_dbg = 0, blk1_c_kv_filtered_dbg = 0;
+
+    // Block 1 dense per-thread task tables. Hoisted to function scope so
+    // their data_ vectors are allocated once and reused across positions
+    // (reset() zeroes only the slots populated by the previous pos).
+#ifdef _OPENMP
+    const int num_threads_blk1_outer = omp_get_max_threads();
+#else
+    const int num_threads_blk1_outer = 1;
+#endif
+    std::vector<DenseBeamTable> blk1_thread_dense_maps(num_threads_blk1_outer);
+    std::vector<std::vector<int>> blk1_thread_key_order(num_threads_blk1_outer);
+
+    // Whether to use the dense-vector path for Block 1's per-thread task_map.
+    // Default ON. Set BLK1_DENSE=0 to fall back to the prior DernaBeamMap path
+    // (kept in-place for direct A/B comparison). Lossless: both paths produce
+    // identical curr_c contributions.
+    static const bool blk1_use_dense = []() {
+        const char* e = std::getenv("BLK1_DENSE");
+        return !(e && e[0] == '0');
+    }();
+
+    // BLK1_AGG: per-(idx,x,y) early-rejection in emit_il/emit_rb.
+    // Phase 0 instrumentation showed 99.83% of update_derna calls are redundant
+    // (existing variant whose score is not improved); skipping the scratch_il
+    // build and the update call entirely on those redundant emits saves the
+    // bt_info copy + function-call work. Lossless: equivalent to running the
+    // update path which would have been a no-op anyway.
+    // Default ON (set BLK1_AGG=0 to disable for A/B comparison). Validated
+    // gap-neutral on the 19-case K=1000 sweep; ~6% wall-time win on P01707.
+    static const bool blk1_agg_enabled = []() {
+        const char* e = std::getenv("BLK1_AGG");
+        return !(e && e[0] == '0');  // default ON; set BLK1_AGG=0 to disable
+    }();
+
     for (int pos = 1; pos < nuc_len; ++pos) {
         auto t0 = high_resolution_clock::now();
         int bb = pos / 3, slot = pos % 3;
@@ -1086,45 +2061,54 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                             : nucleotides[pna][x1_cur][0];
                                     int _yj = (slot > 0) ? nucleotides[pbb][yy][slot - 1]
                                             : nucleotides[ppb_prev][y1_cur][2];
-                                    double mfe_hp = (double)Zuker::hairpin_loop(nuc_left, nuc_right, xi_, _yj, loop_len);
-                                    // cai_hp is constant w.r.t. x1_cur/y1_cur; pick best mfe only
-                                    double total_e = combined_score(lambda, mfe_hp, cai_hp);
-                                    if (total_e < best_total) {
-                                        best_total = total_e;
-                                        best_mfe = mfe_hp;
-                                        // best_cai stays = cai_hp for standard path
-                                    }
-                                    // Special-hairpin (triloop/tetraloop/hexaloop) path: also evaluate
-                                    // z.hairpin_special_CAI which returns {temp_he, mfe_raw, cai_raw, ...}.
-                                    // mfe_raw is lambda*mfe and cai_raw is (lambda-1)*cai.  Convert back.
+                                    // Special-hairpin (triloop/tetraloop/hexaloop) path: Turner model mandates
+                                    // special energy whenever the loop sequence matches a special key — it is
+                                    // NOT a competing alternative to the regular formula. If z.hairpin_special_CAI_pub
+                                    // returns he_sp < inf, the loop string matched a special entry; use that
+                                    // energy directly. Otherwise fall through to the regular formula.
+                                    // (Prior code took min(regular, special), which produced a phantom energy
+                                    // when the regular formula happened to be more favorable than the special
+                                    // — evaluate_structure_energy always uses the special for matching sequences,
+                                    // so the beam's NtoC.mfe disagreed with the traceback structure energy.)
+                                    double mfe_hp;
+                                    double cai_cand = cai_hp;
+                                    bool matched_special = false;
                                     if (try_special) {
+                                        // When pna == ppb_prev (the middle-loop aa is a SINGLE
+                                        // amino acid shared by both x1 and y1 parameters), force
+                                        // x1 to match the iterated y1_cur so hairpin_special_CAI's
+                                        // tetraloop / hexaloop codon lookup sees a consistent
+                                        // codon choice. Without this, n_left==1 pins x1 to 0
+                                        // and the special test misses matches such as CUACGG
+                                        // whenever aa=15's codon is not codon 0.
+                                        int x1_eff = x1_cur;
+                                        if (pna >= 0 && pna == ppb_prev) x1_eff = y1_cur;
                                         double he_sp, mfe_sp_l, cai_sp_l;
                                         std::vector<int> tmp_v;
                                         std::tie(he_sp, mfe_sp_l, cai_sp_l, tmp_v) = z.hairpin_special_CAI_pub(
                                             lambda, l_zuker, aa_loop, bb, paa_loop,
-                                            pbb, pna, ppb_prev, x1_cur, y1_cur,
+                                            pbb, pna, ppb_prev, x1_eff, y1_cur,
                                             nuc_left, xi_, _yj, nuc_right, xx_loop, yy,
                                             ii_loop, slot);
                                         if (he_sp < inf) {
-                                            // hairpin_special_CAI multiplies mfe by lambda and cai by (lambda-1);
-                                            // convert back to raw (cKcal mfe and raw cai sum).
+                                            // Convert back: hairpin_special_CAI multiplies mfe by lambda and
+                                            // cai by (lambda-1).
                                             double mfe_sp_raw = (lambda != 0.0) ? (mfe_sp_l / lambda) : mfe_sp_l;
-                                            // Loop-interior CAI already counted in var.cai; the cai returned
-                                            // by hairpin_special_CAI corresponds to pair-boundary codons
-                                            // (and optionally a+1/b-1).  To align with standard-path accounting
-                                            // (cai_hp = var.cai + pair_cai_only with a1=b1=-1), we DROP the
-                                            // a+1/b-1 contributions from the special-path cai by recomputing
-                                            // just the pair CAI via add_hairpin_CAI_2(...,-1,-1,-1,-1,...).
                                             double pair_cai_only_sp = z.add_hairpin_CAI_2(aa_loop, bb, xx_loop, yy,
                                                                                     -1, -1, -1, -1, ii_loop, slot);
-                                            double cai_sp_total = var.cai + pair_cai_only_sp;
-                                            double total_sp = combined_score(lambda, mfe_sp_raw, cai_sp_total);
-                                            if (total_sp < best_total) {
-                                                best_total = total_sp;
-                                                best_mfe = mfe_sp_raw;
-                                                best_cai = cai_sp_total;
-                                            }
+                                            cai_cand = var.cai + pair_cai_only_sp;
+                                            mfe_hp = mfe_sp_raw;
+                                            matched_special = true;
                                         }
+                                    }
+                                    if (!matched_special) {
+                                        mfe_hp = (double)Zuker::hairpin_loop(nuc_left, nuc_right, xi_, _yj, loop_len);
+                                    }
+                                    double total_e = combined_score(lambda, mfe_hp, cai_cand);
+                                    if (total_e < best_total) {
+                                        best_total = total_e;
+                                        best_mfe = mfe_hp;
+                                        best_cai = cai_cand;
                                     }
                                 }
                             }
@@ -1173,6 +2157,31 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
         }
         for (int seg_len = 1; seg_len < (int)curr_s.size(); ++seg_len)
             prune_beam_derna_checked(curr_s[seg_len], beamsize, pos, n, DernaTableKind::S, seg_len);
+
+        // ---- Build codon-pair aggregation for S table at this pos (post-prune) ----
+        // S table is finalized for pos after the prune above. Block 1 / closure
+        // logic still uses tab_s directly; agg table is BUILT but not CONSUMED.
+        {
+            CodonAggTables::PerPosDiag* s_diag_ptr = agg_diag_on ? &agg_tables.diag[pos] : nullptr;
+            for (int seg_len = 1; seg_len < (int)curr_s.size(); ++seg_len) {
+                build_s_codon_agg(curr_s[seg_len],
+                                  agg_tables.s_agg[pos][seg_len],
+                                  s_diag_ptr);
+            }
+        }
+
+        // Update min_sl_at_pos[pos]: best (min) S_left score ending at this pos
+        // across all seg_lens and all keys. Used by Approach (a) lookahead prune.
+        {
+            double best_sl = std::numeric_limits<double>::infinity();
+            for (int seg_len = 1; seg_len < (int)curr_s.size(); ++seg_len) {
+                for (const auto& kv : curr_s[seg_len]) {
+                    if (std::isfinite(kv.second.score) && kv.second.score < best_sl)
+                        best_sl = kv.second.score;
+                }
+            }
+            min_sl_at_pos[pos] = best_sl;
+        }
 
         // ---------- Local flattened caches for hot C/CS recurrences ----------
         // Keep semantics identical; only avoid repeatedly walking unordered_map buckets
@@ -1314,37 +2323,79 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 const BeamEntry& s_right_ent = tab_s[pos_prev][seg_len_right].at(s_right_key);
 
                 // Decode CS key to recover the committed nuc_inner_L and nuc_single_start.
+                // cs_get_index packs the low 6 bits as
+                //   nuc_inner_L * 16 + nuc_outer_R * 4 + nuc_single_start,
+                // so triple = key % 64 (NOT key / 31). The previous decoder divided
+                // by SINGLE_MAX_LEN+1 first, which yielded near-random values in
+                // [0,3] — Block 1 was masking the resulting CS-path errors.
                 int inner_nuc_li = -1;
                 int nuc_qp1_committed = -1;
                 {
                     long long csk = (long long)cs_ent.cs_pack_outer;
-                    long long rest = csk / (SINGLE_MAX_LEN + 1);
-                    int triple = rest % 64;
+                    int triple = (int)(csk % 64);
                     int nuc_inner_L = triple / 16;
                     int nuc_single_start = triple % 4;
                     inner_nuc_li = nuc_inner_L;
                     nuc_qp1_committed = nuc_single_start;
                 }
 
-                // Pick the single inner variant matching the CS's committed nuc_inner_L (best mfe).
-                int inner_x_v = inner_ent.x, inner_y_v = inner_ent.y;
-                double inner_mfe_v = inner_ent.mfe, inner_cai_v = inner_ent.cai;
-                {
-                    bool found_iv = false;
-                    for (const auto& iv : inner_ent.variants) {
-                        int nl = nucleotides[protein[inner_ent.a]][iv.x][inner_ent.i];
-                        if (nl == inner_nuc_li) {
-                            if (!found_iv || iv.mfe < inner_mfe_v) {
-                                inner_x_v = iv.x; inner_y_v = iv.y;
-                                inner_mfe_v = iv.mfe; inner_cai_v = iv.cai;
-                                found_iv = true;
+                // Coverage-gap fix: collect inner-C variants matching the CS's committed
+                // nuc_inner_L. The yy-loop body below is wrapped in a per-iv loop so each
+                // inner codon assignment gets its own seam-compatible xx_o (and slv.y in
+                // S_CS path).
+                //
+                // Critical correctness point (2026-04-28): the previous fixed-cap of 6
+                // dropped (x,y) variants when inner_ent had >6 matching variants — the
+                // iteration order placed all-y=Y0 variants first, evicting better-scoring
+                // (x, Y1) tuples. For c states with multiple x values per nuc_inner_L AND
+                // multiple y values per nuc_outer_R (e.g. Leucine inner pair, where ALL
+                // 6 codons produce U at slot 1), 12 valid variants existed but only 6
+                // worse-scored ones were sampled.
+                //
+                // Selection rule:
+                //   * For each iv.x, pick the BEST-score variant (any iv.y producing the
+                //     same nuc_ri — which is invariant since nuc_ri is encoded in the
+                //     c_ent key).
+                //   * When inner_ent.b == bb (closure's outer-right shares a codon with
+                //     inner-C's right), iv.y also locks yy via line 1756, so we must keep
+                //     ALL (iv.x, iv.y) ivs (max 36) to expose every valid yy choice.
+                std::array<std::array<const XYVariant*, 6>, 6> best_iv_by_xy;
+                std::array<std::array<double, 6>, 6> best_iv_score_by_xy;
+                for (auto& row : best_iv_by_xy) for (auto& p : row) p = nullptr;
+                for (auto& row : best_iv_score_by_xy) for (auto& s : row) s = 1e30;
+                for (const auto& iv : inner_ent.variants) {
+                    if (iv.x < 0 || iv.x >= 6 || iv.y < 0 || iv.y >= 6) continue;
+                    int nl = nucleotides[protein[inner_ent.a]][iv.x][inner_ent.i];
+                    if (nl != inner_nuc_li) continue;
+                    if (iv.score < best_iv_score_by_xy[iv.x][iv.y]) {
+                        best_iv_score_by_xy[iv.x][iv.y] = iv.score;
+                        best_iv_by_xy[iv.x][iv.y] = &iv;
+                    }
+                }
+                std::array<const XYVariant*, 36> matching_ivs;
+                int n_matching_ivs = 0;
+                const bool inner_b_eq_bb = (inner_ent.b == bb);
+                if (inner_b_eq_bb) {
+                    // Keep every (x,y) — line 1756 locks yy to inner_y_v.
+                    for (int xv = 0; xv < 6; ++xv) for (int yv = 0; yv < 6; ++yv) {
+                        if (best_iv_by_xy[xv][yv] && n_matching_ivs < 36)
+                            matching_ivs[n_matching_ivs++] = best_iv_by_xy[xv][yv];
+                    }
+                } else {
+                    // Best y per x — yy is free of iv.y, so picking best-score iv per x is lossless.
+                    for (int xv = 0; xv < 6; ++xv) {
+                        const XYVariant* best = nullptr;
+                        double best_sc = 1e30;
+                        for (int yv = 0; yv < 6; ++yv) {
+                            if (best_iv_by_xy[xv][yv] && best_iv_score_by_xy[xv][yv] < best_sc) {
+                                best = best_iv_by_xy[xv][yv];
+                                best_sc = best_iv_score_by_xy[xv][yv];
                             }
                         }
+                        if (best && n_matching_ivs < 36) matching_ivs[n_matching_ivs++] = best;
                     }
-                    if (!found_iv) continue;
                 }
-                const int nuc_li = nucleotides[protein[inner_ent.a]][inner_x_v][inner_ent.i];
-                const int nuc_ri = nucleotides[protein[inner_ent.b]][inner_y_v][inner_ent.j];
+                if (n_matching_ivs == 0) continue;
 
                 // --- Variant-elimination optimization for CS->C ---
                 // All variants of a merged entry share the same boundary nucleotides (encoded
@@ -1479,6 +2530,35 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 // (D) Iterate (yy, xx_o) for CStoC and (yy, slt, xx_o2) for S_CStoC.
                 // loop_e depends only on key-derived boundary nucs, so it's computed once
                 // per (outer pair, nuc_jm1) combination. Variant scores are looked up via tables.
+                //
+                // iv-wrap: per matching inner-C variant, run the yy iteration. Precomputations
+                // (sl_cs_tasks, cs_best_by_y, cs_best_by_jm1) are iv-independent.
+                //
+                // CSPATH_LOSS_DIAG instrumentation (env-gated): replace the single-best
+                // aggregations cs_best_by_y / cs_best_by_jm1 / sl_by_* with full-enumeration
+                // closures, to test whether they cause coverage loss when Block 1 is stubbed.
+                // Default behavior preserved when the env vars are unset.
+                static const bool cspath_cy_full = []() {
+                    const char* e = std::getenv("CSPATH_CY_FULL");
+                    return e && e[0] == '1';
+                }();
+                static const bool cspath_jm1_full = []() {
+                    const char* e = std::getenv("CSPATH_JM1_FULL");
+                    return e && e[0] == '1';
+                }();
+                static const bool cspath_sl_full = []() {
+                    const char* e = std::getenv("CSPATH_SL_FULL");
+                    return e && e[0] == '1';
+                }();
+                for (int iv_idx = 0; iv_idx < n_matching_ivs; ++iv_idx) {
+                    const XYVariant& cur_iv = *matching_ivs[iv_idx];
+                    const int    inner_x_v   = cur_iv.x;
+                    const int    inner_y_v   = cur_iv.y;
+                    const double inner_mfe_v = cur_iv.mfe;
+                    const double inner_cai_v = cur_iv.cai;
+                    const int    nuc_li = nucleotides[protein[inner_ent.a]][inner_x_v][inner_ent.i];
+                    const int    nuc_ri = nucleotides[protein[inner_ent.b]][inner_y_v][inner_ent.j];
+
                 for (int yy = 0; yy < ncod_bb; ++yy) {
                     int nuc_ro = cs_yy_nuc_ro[yy];
                     double cai_yy_pbb = cs_yy_cai[yy];
@@ -1510,29 +2590,87 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                         double best_mfe_cand = 0, best_cai_cand = 0;
                         double best_sc = BV_INF_CS;
                         if (same_codon_cs) {
-                            // yy is locked to csvar.y → single sr+loop_e computation.
-                            double loop_e = score_single_loop_with_mismatch(lambda,
-                                nuc_lo, nuc_ro_eff, nuc_li, nuc_ri,
-                                0, seg_len_right,
-                                nuc_li, cs_best_by_y[yy].nuc_jm1, nuc_lo, nuc_qp1_committed);
-                            best_mfe_cand = inner_mfe_v + cs_best_by_y[yy].sr_mfe + loop_e;
-                            best_cai_cand = inner_cai_v + cs_best_by_y[yy].sr_cai + cai_yy_eff
-                                + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
-                            best_sc = combined_score(lambda, best_mfe_cand, best_cai_cand);
-                        } else {
-                            // Try all distinct nuc_jm1 values, keep best total.
-                            for (int jm1 = 0; jm1 < 4; ++jm1) {
-                                if (!cs_best_by_jm1[jm1].valid) continue;
+                            if (cspath_cy_full) {
+                                // FULL ENUMERATION: iterate all srs matching (nuc_qp1, sv.y==yy).
+                                // For each, compute loop_e (with nuc_jm1 derived from yy),
+                                // and track best.
+                                int njm1_locked = nucleotides[protein[cs_ent.b]][yy][cs_ent.j];
                                 double loop_e = score_single_loop_with_mismatch(lambda,
                                     nuc_lo, nuc_ro_eff, nuc_li, nuc_ri,
                                     0, seg_len_right,
-                                    nuc_li, jm1, nuc_lo, nuc_qp1_committed);
-                                double mfe_c = inner_mfe_v + cs_best_by_jm1[jm1].sr_mfe + loop_e;
-                                double cai_c = inner_cai_v + cs_best_by_jm1[jm1].sr_cai + cai_yy_eff
-                                    + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
-                                double sc = combined_score(lambda, mfe_c, cai_c);
-                                if (sc < best_sc) {
-                                    best_sc = sc; best_mfe_cand = mfe_c; best_cai_cand = cai_c;
+                                    nuc_li, njm1_locked, nuc_lo, nuc_qp1_committed);
+                                for (const auto& sv : s_right_ent.variants) {
+                                    if (!std::isfinite(sv.cai) || !std::isfinite(sv.mfe) || cai_looks_garbage(sv.cai)) continue;
+                                    int nx = nucleotides[protein[s_right_ent.a]][sv.x][s_right_ent.i];
+                                    if (nx != nuc_qp1_committed) continue;
+                                    if (sv.y != yy) continue;
+                                    double mfe_c = inner_mfe_v + sv.mfe + loop_e;
+                                    double cai_c = inner_cai_v + sv.cai + cai_yy_eff
+                                        + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
+                                    double sc = combined_score(lambda, mfe_c, cai_c);
+                                    if (sc < best_sc) {
+                                        best_sc = sc; best_mfe_cand = mfe_c; best_cai_cand = cai_c;
+                                    }
+                                }
+                            } else {
+                                // yy is locked to csvar.y → single sr+loop_e computation.
+                                if (cs_best_by_y[yy].valid) {
+                                    double loop_e = score_single_loop_with_mismatch(lambda,
+                                        nuc_lo, nuc_ro_eff, nuc_li, nuc_ri,
+                                        0, seg_len_right,
+                                        nuc_li, cs_best_by_y[yy].nuc_jm1, nuc_lo, nuc_qp1_committed);
+                                    best_mfe_cand = inner_mfe_v + cs_best_by_y[yy].sr_mfe + loop_e;
+                                    best_cai_cand = inner_cai_v + cs_best_by_y[yy].sr_cai + cai_yy_eff
+                                        + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
+                                    best_sc = combined_score(lambda, best_mfe_cand, best_cai_cand);
+                                }
+                            }
+                        } else {
+                            if (cspath_jm1_full) {
+                                // FULL ENUMERATION: iterate all (cy, sr) pairs matching constraints.
+                                // For each, jm1 is derived from cy. nuc_jm1 takes 4 values total
+                                // but multiple (cy, sr) pairs can map to each.
+                                std::array<bool, 6> csvar_y_exists{};
+                                for (const auto& csvar : cs_ent.variants) {
+                                    if (!std::isfinite(csvar.cai) || !std::isfinite(csvar.mfe) || cai_looks_garbage(csvar.cai)) continue;
+                                    if (csvar.y >= 0 && csvar.y < 6) csvar_y_exists[csvar.y] = true;
+                                }
+                                for (int cy = 0; cy < 6; ++cy) {
+                                    if (!csvar_y_exists[cy]) continue;
+                                    int njm1 = nucleotides[protein[cs_ent.b]][cy][cs_ent.j];
+                                    double loop_e = score_single_loop_with_mismatch(lambda,
+                                        nuc_lo, nuc_ro_eff, nuc_li, nuc_ri,
+                                        0, seg_len_right,
+                                        nuc_li, njm1, nuc_lo, nuc_qp1_committed);
+                                    for (const auto& sv : s_right_ent.variants) {
+                                        if (!std::isfinite(sv.cai) || !std::isfinite(sv.mfe) || cai_looks_garbage(sv.cai)) continue;
+                                        int nx = nucleotides[protein[s_right_ent.a]][sv.x][s_right_ent.i];
+                                        if (nx != nuc_qp1_committed) continue;
+                                        if (sv.y != cy) continue;
+                                        double mfe_c = inner_mfe_v + sv.mfe + loop_e;
+                                        double cai_c = inner_cai_v + sv.cai + cai_yy_eff
+                                            + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
+                                        double sc = combined_score(lambda, mfe_c, cai_c);
+                                        if (sc < best_sc) {
+                                            best_sc = sc; best_mfe_cand = mfe_c; best_cai_cand = cai_c;
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Try all distinct nuc_jm1 values, keep best total.
+                                for (int jm1 = 0; jm1 < 4; ++jm1) {
+                                    if (!cs_best_by_jm1[jm1].valid) continue;
+                                    double loop_e = score_single_loop_with_mismatch(lambda,
+                                        nuc_lo, nuc_ro_eff, nuc_li, nuc_ri,
+                                        0, seg_len_right,
+                                        nuc_li, jm1, nuc_lo, nuc_qp1_committed);
+                                    double mfe_c = inner_mfe_v + cs_best_by_jm1[jm1].sr_mfe + loop_e;
+                                    double cai_c = inner_cai_v + cs_best_by_jm1[jm1].sr_cai + cai_yy_eff
+                                        + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
+                                    double sc = combined_score(lambda, mfe_c, cai_c);
+                                    if (sc < best_sc) {
+                                        best_sc = sc; best_mfe_cand = mfe_c; best_cai_cand = cai_c;
+                                    }
                                 }
                             }
                         }
@@ -1545,10 +2683,8 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                          (int)DernaManner::MANNER_CStoC, best_mfe_cand, best_cai_cand);
                         ent_cl.bt_info.clear();
                         ent_cl.cs_pack_outer = (long long)cs_tab_k;
-                        ent_cl.cs_pack_inner_c = -1LL;
                         check_c_entry_invariant(lambda, ent_cl, "CS->C", pos);
-                        if (task_map_cs.find(key_cl) == task_map_cs.end()) task_order_cs.push_back(key_cl);
-                        update_derna(task_map_cs, key_cl, best_sc, ent_cl);
+                        if (update_derna(task_map_cs, key_cl, best_sc, ent_cl)) task_order_cs.push_back(key_cl);
                     }
 
                     // -------------------- (2) S + CS -> C --------------------
@@ -1562,47 +2698,22 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                             double best_total = BV_INF_CS;
                             double best_mfe2 = 0, best_cai2 = 0;
                             int best_slv_x = -1, best_slv_y = -1;
+                            // FIX (phantom-energy bug): when we pick the best `jm1` across
+                            // the 4 options, we also implicitly pick a specific CS variant
+                            // whose right-S-boundary nucleotide equals `jm1`. Without
+                            // recording which, traceback can select a DIFFERENT CS variant,
+                            // and the final rna's nucleotide at pos-1 won't match the one
+                            // the fill assumed → phantom over-credit of loop_e2. Record
+                            // best_csvar_y so traceback can constrain the CS lookup.
+                            int best_csvar_y = -1;
+                            int best_jm1 = -1;
 
-                            // Determine which nuc_jm1 values to try.
-                            int jm1_start = 0, jm1_end = 4;
-                            if (same_codon_cs) {
-                                // csvar.y locked to yy → single nuc_jm1 value
-                                jm1_start = cs_best_by_y[yy].nuc_jm1;
-                                jm1_end = jm1_start + 1;
-                            }
-
-                            for (int jm1 = jm1_start; jm1 < jm1_end; ++jm1) {
-                                double sr_mfe_j, sr_cai_j;
-                                if (same_codon_cs) {
-                                    sr_mfe_j = cs_best_by_y[yy].sr_mfe;
-                                    sr_cai_j = cs_best_by_y[yy].sr_cai;
-                                } else {
-                                    if (!cs_best_by_jm1[jm1].valid) continue;
-                                    sr_mfe_j = cs_best_by_jm1[jm1].sr_mfe;
-                                    sr_cai_j = cs_best_by_jm1[jm1].sr_cai;
-                                }
-
-                                double loop_e2 = score_single_loop_with_mismatch(lambda,
-                                    nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
-                                    slt.seg_len_left, seg_len_right,
-                                    slt.nuc_i1_sl, jm1, slt.nuc_pm1_sl, nuc_qp1_committed);
-
-                                // Find best slv subject to seam constraints.
-                                const XYVariant* sl_pick = nullptr;
-                                if (slt.same_codon_sl) {
-                                    // slv.y must == inner_x_v (seam with inner C's left boundary)
-                                    if (inner_x_v >= 0 && inner_x_v < 6) {
-                                        sl_pick = slt.xx_o2_locked
-                                            ? slt.sl_by_xy[xx_o2][inner_x_v].ptr
-                                            : slt.sl_by_y[inner_x_v].ptr;
-                                    }
-                                } else {
-                                    sl_pick = slt.xx_o2_locked
-                                        ? slt.sl_by_x[xx_o2].ptr
-                                        : slt.sl_all.ptr;
-                                }
-                                if (!sl_pick) continue;
-
+                            // Helper lambda: try a single (sr_mfe, sr_cai, jm1, cand_csvar_y) +
+                            // a single sl_pick combination, update best_*.
+                            auto try_emit = [&](double sr_mfe_j, double sr_cai_j,
+                                                int jm1, int cand_csvar_y,
+                                                const XYVariant* sl_pick, double loop_e2) {
+                                if (!sl_pick) return;
                                 double mfe2 = inner_mfe_v + sr_mfe_j + sl_pick->mfe + loop_e2;
                                 double cai2 = inner_cai_v + sr_cai_j + cai_yy_eff + sl_pick->cai
                                     + (slt.ii_o2 == 2 ? codon_cai[slt.paa_o2][xx_o2] : 0.0);
@@ -1613,26 +2724,132 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                     best_cai2 = cai2;
                                     best_slv_x = sl_pick->x;
                                     best_slv_y = sl_pick->y;
+                                    best_csvar_y = cand_csvar_y;
+                                    best_jm1 = jm1;
+                                }
+                            };
+
+                            // Helper lambda: given (sr_mfe, sr_cai, jm1, cand_csvar_y, loop_e2),
+                            // dispatch to single-best sl pick (default) or full sl iteration
+                            // (CSPATH_SL_FULL=1).
+                            auto handle_sl_pick = [&](double sr_mfe_j, double sr_cai_j,
+                                                       int jm1, int cand_csvar_y, double loop_e2) {
+                                if (cspath_sl_full) {
+                                    // FULL ENUMERATION: iterate all slvars matching seam
+                                    // constraints (same_codon_sl ? sv.y==inner_x_v : (any))
+                                    // and (xx_o2_locked ? sv.x==xx_o2 : (any)).
+                                    for (const auto& sv : slt.s_left_ent->variants) {
+                                        if (!std::isfinite(sv.cai) || !std::isfinite(sv.mfe) || cai_looks_garbage(sv.cai)) continue;
+                                        if (slt.same_codon_sl && sv.y != inner_x_v) continue;
+                                        if (slt.xx_o2_locked && sv.x != xx_o2) continue;
+                                        try_emit(sr_mfe_j, sr_cai_j, jm1, cand_csvar_y, &sv, loop_e2);
+                                    }
+                                } else {
+                                    const XYVariant* sl_pick = nullptr;
+                                    if (slt.same_codon_sl) {
+                                        if (inner_x_v >= 0 && inner_x_v < 6) {
+                                            sl_pick = slt.xx_o2_locked
+                                                ? slt.sl_by_xy[xx_o2][inner_x_v].ptr
+                                                : slt.sl_by_y[inner_x_v].ptr;
+                                        }
+                                    } else {
+                                        sl_pick = slt.xx_o2_locked
+                                            ? slt.sl_by_x[xx_o2].ptr
+                                            : slt.sl_all.ptr;
+                                    }
+                                    try_emit(sr_mfe_j, sr_cai_j, jm1, cand_csvar_y, sl_pick, loop_e2);
+                                }
+                            };
+
+                            if (same_codon_cs) {
+                                if (cspath_cy_full) {
+                                    // FULL ENUMERATION over srs matching (nuc_qp1, sv.y==yy).
+                                    int njm1_locked = nucleotides[protein[cs_ent.b]][yy][cs_ent.j];
+                                    double loop_e2 = score_single_loop_with_mismatch(lambda,
+                                        nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                        slt.seg_len_left, seg_len_right,
+                                        slt.nuc_i1_sl, njm1_locked, slt.nuc_pm1_sl, nuc_qp1_committed);
+                                    for (const auto& sv : s_right_ent.variants) {
+                                        if (!std::isfinite(sv.cai) || !std::isfinite(sv.mfe) || cai_looks_garbage(sv.cai)) continue;
+                                        int nx = nucleotides[protein[s_right_ent.a]][sv.x][s_right_ent.i];
+                                        if (nx != nuc_qp1_committed) continue;
+                                        if (sv.y != yy) continue;
+                                        handle_sl_pick(sv.mfe, sv.cai, njm1_locked, yy, loop_e2);
+                                    }
+                                } else if (cs_best_by_y[yy].valid) {
+                                    int jm1_locked = cs_best_by_y[yy].nuc_jm1;
+                                    double loop_e2 = score_single_loop_with_mismatch(lambda,
+                                        nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                        slt.seg_len_left, seg_len_right,
+                                        slt.nuc_i1_sl, jm1_locked, slt.nuc_pm1_sl, nuc_qp1_committed);
+                                    handle_sl_pick(cs_best_by_y[yy].sr_mfe, cs_best_by_y[yy].sr_cai,
+                                                    jm1_locked, yy, loop_e2);
+                                }
+                            } else {
+                                if (cspath_jm1_full) {
+                                    // FULL ENUMERATION over (cy, sr) pairs.
+                                    std::array<bool, 6> csvar_y_exists{};
+                                    for (const auto& csvar : cs_ent.variants) {
+                                        if (!std::isfinite(csvar.cai) || !std::isfinite(csvar.mfe) || cai_looks_garbage(csvar.cai)) continue;
+                                        if (csvar.y >= 0 && csvar.y < 6) csvar_y_exists[csvar.y] = true;
+                                    }
+                                    for (int cy = 0; cy < 6; ++cy) {
+                                        if (!csvar_y_exists[cy]) continue;
+                                        int njm1 = nucleotides[protein[cs_ent.b]][cy][cs_ent.j];
+                                        double loop_e2 = score_single_loop_with_mismatch(lambda,
+                                            nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                            slt.seg_len_left, seg_len_right,
+                                            slt.nuc_i1_sl, njm1, slt.nuc_pm1_sl, nuc_qp1_committed);
+                                        for (const auto& sv : s_right_ent.variants) {
+                                            if (!std::isfinite(sv.cai) || !std::isfinite(sv.mfe) || cai_looks_garbage(sv.cai)) continue;
+                                            int nx = nucleotides[protein[s_right_ent.a]][sv.x][s_right_ent.i];
+                                            if (nx != nuc_qp1_committed) continue;
+                                            if (sv.y != cy) continue;
+                                            handle_sl_pick(sv.mfe, sv.cai, njm1, cy, loop_e2);
+                                        }
+                                    }
+                                } else {
+                                    for (int jm1 = 0; jm1 < 4; ++jm1) {
+                                        if (!cs_best_by_jm1[jm1].valid) continue;
+                                        double loop_e2 = score_single_loop_with_mismatch(lambda,
+                                            nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                            slt.seg_len_left, seg_len_right,
+                                            slt.nuc_i1_sl, jm1, slt.nuc_pm1_sl, nuc_qp1_committed);
+                                        handle_sl_pick(cs_best_by_jm1[jm1].sr_mfe, cs_best_by_jm1[jm1].sr_cai,
+                                                       jm1, cs_best_by_jm1[jm1].csvar_y, loop_e2);
+                                    }
                                 }
                             }
 
                             if (best_total >= BV_INF_CS) continue;
                             if (slt.xx_o2_locked && best_slv_x != xx_o2) continue;
                             cnt_S_CS_to_C_local[tid_cs]++;
+                            (void)best_jm1;
 
                             int key2 = nuc_key_c_nuc(sigma(slt.aa_o2, slt.ii_o2), pos, nuc_lo2, nuc_ro_eff, nuc_len);
 
                             BeamEntry ent2(best_total, slt.aa_o2, bb, slt.ii_o2, slot, xx_o2, yy_eff,
                                           (int)DernaManner::MANNER_S_CStoC, best_mfe2, best_cai2);
-                            ent2.bt_info = {slt.s_left_key, 0, best_slv_x, best_slv_y};
+                            // bt_info layout (FIX): {s_left_key, 0, slv.x, slv.y,
+                            //                        best_csvar_y, seg_len_left, seam_pos_left}
+                            // bt[5] = seg_len_left, bt[6] = seam_pos_left = inner_left-1.
+                            // The S_CStoC traceback uses these to look up the left-S
+                            // directly in tab_s[seam_pos_left][seg_len_left]. The prior
+                            // code iterated seg from 1 on the WRONG tab_s row (indexed by
+                            // s_left_key's left_pos instead of the seam/right position) and
+                            // picked the first-matching key, which could be a DIFFERENT
+                            // S_left entry with different codons. That was the variant-
+                            // inconsistency source of the phantom-energy bug.
+                            int seam_pos_left = cs_ent.cs_inner_left - 1;
+                            ent2.bt_info = {slt.s_left_key, 0, best_slv_x, best_slv_y,
+                                            best_csvar_y, slt.seg_len_left, seam_pos_left};
                             ent2.cs_pack_outer = (long long)cs_tab_k;
-                            ent2.cs_pack_inner_c = -1LL;
                             check_c_entry_invariant(lambda, ent2, "S+CS->C", pos);
-                            if (task_map_cs.find(key2) == task_map_cs.end()) task_order_cs.push_back(key2);
-                            update_derna(task_map_cs, key2, best_total, ent2);
+                            if (update_derna(task_map_cs, key2, best_total, ent2)) task_order_cs.push_back(key2);
                         }
                     }
                 }  // end yy
+                }  // end iv_idx (matching inner-C variants)
             }  // end parallel for over prev_cs_flat tasks
 
             // -------- Merge phase (mirrors Block 1) --------
@@ -1680,6 +2897,843 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
         //   Right-bulge (MANNER_C_StoC): outer_left = inner_left-1, n1=0, n2=seg_len_right
         //   Internal loop (MANNER_S_C_StoC): additionally prepend left S ending at inner_left-1
         // This avoids the intermediate CS composite pruning that limits CS→C to k candidates.
+#if USE_CODON_LOOKUP_CLOSURE
+        if (pos >= 5) {
+            // ---- New codon-pair-iterating closure (Step 3 of agg refactor) ----
+            // PERF-OPTIMIZED VERSION (Perf Iteration). Mirrors baseline Block 1's
+            // emit cadence: ~1 update_derna call per output (xx_o, yy_eff) slot,
+            // not per inner (ci, sl, sr) tuple. Adds:
+            //   A) Inverted inner loop: per output slot, find best inner combination
+            //      via per-grid best_by_x/y/xy summaries (mirrors baseline's
+            //      best_csr_by_xy precomputation).
+            //   B) loop_e2 caching (4 x SLL_MAX x 4 x 4 table per inner block).
+            //   C) OpenMP parallelization over (seg_len_right, sr_left_pos) tasks
+            //      with per-thread dense beam tables and a deterministic merge.
+            //
+            // The per-grid summaries are partitioned by nucleotide quadrant
+            //   c-grid:   (nuc_li, nuc_ri)   — c.x → nuc_li, c.y → nuc_ri
+            //   sr-grid:  (nuc_qp1, nuc_jm1) — sr.x → nuc_qp1, sr.y → nuc_jm1
+            //   sl-grid:  (nuc_i1, nuc_pm1)  — sl.x → nuc_i1, sl.y → nuc_pm1
+            // Each (4x4) quadrant pretends to be one "key" and is treated like a
+            // baseline c_ent/sr_ent. That gives correctness across the codon-pair
+            // collapse: cells in the same quadrant share boundary nucleotides
+            // and so share the same loop_e contribution.
+            const auto& s_right_agg_outer = agg_tables.s_agg[pos_prev];
+
+            // ---- Helper: build per-grid quadrant summaries. ----
+            // For a given grid, partition cells by (boundary_x_nuc, boundary_y_nuc)
+            // quadrant. Within each populated quadrant, build:
+            //   best_by_x[6]   : min score per (cell.x), -1 if absent
+            //   best_by_y[6]   : min score per (cell.y), -1 if absent
+            //   best_by_xy[6][6] : the cell at (x,y) score, -1 if absent
+            //   best_all       : overall best score in quadrant
+            // Each chosen "best" remembers the cell idx for backtrace.
+            struct AggBest {
+                double score;
+                float mfe, cai;
+                int8_t cell_idx;     // index into grid.cells (= x*NCOD+y), -1 if invalid
+                bool valid;
+            };
+            static constexpr double AGG_INF = 1e30;
+            struct QuadrantSummary {
+                std::array<AggBest, 6> by_x;
+                std::array<AggBest, 6> by_y;
+                std::array<std::array<AggBest, 6>, 6> by_xy;
+                AggBest all;
+                bool active = false;
+            };
+            // Quadrant indexed by (nuc_a * 4 + nuc_b) where nuc_a is x-side nuc, nuc_b is y-side nuc.
+            using GridQuadrants = std::array<QuadrantSummary, 16>;
+
+            // Lambda to build per-quadrant summaries for an agg grid.
+            //   xy_to_nuc_a[xx] = nucleotide for cell.x = xx (boundary on x-side)
+            //   xy_to_nuc_b[yy] = nucleotide for cell.y = yy (boundary on y-side)
+            // Cells with x or y outside valid ncod range are skipped.
+            // Sentinel "invalid" used for AggBest fields. Building lazily: we only
+            // initialize quadrants that get touched. Caller must inspect `active_qids`
+            // (a list of quadrant ids that became active) to drive iteration.
+            auto build_grid_quadrants = [&](const CodonAggGrid& grid,
+                                            int paa_a, int slot_a, int ncod_a,
+                                            int paa_b, int slot_b, int ncod_b,
+                                            GridQuadrants& out,
+                                            std::array<int8_t, 16>& active_qids,
+                                            int& num_active) {
+                num_active = 0;
+                for (uint8_t ci_idx : grid.populated_indices) {
+                    const CodonAggEntry& cell = grid.cells[ci_idx];
+                    if (!cell.valid) continue;
+                    const int xx = ci_idx / NCOD;
+                    const int yy = ci_idx % NCOD;
+                    if (xx >= ncod_a) continue;
+                    if (yy >= ncod_b) continue;
+                    const int nuc_a = nucleotides[paa_a][xx][slot_a];
+                    const int nuc_b = nucleotides[paa_b][yy][slot_b];
+                    const int qid = nuc_a * 4 + nuc_b;
+                    QuadrantSummary& q = out[qid];
+                    if (!q.active) {
+                        // Lazy init this quadrant's tables.
+                        q.active = true;
+                        q.all = AggBest{AGG_INF, 0.0f, 0.0f, -1, false};
+                        for (auto& bv : q.by_x) bv = AggBest{AGG_INF, 0.0f, 0.0f, -1, false};
+                        for (auto& bv : q.by_y) bv = AggBest{AGG_INF, 0.0f, 0.0f, -1, false};
+                        for (auto& row : q.by_xy)
+                            for (auto& bv : row) bv = AggBest{AGG_INF, 0.0f, 0.0f, -1, false};
+                        if (num_active < 16) active_qids[num_active++] = (int8_t)qid;
+                    }
+                    AggBest cand{(double)cell.score, cell.mfe, cell.cai, (int8_t)ci_idx, true};
+                    if (cand.score < q.by_x[xx].score) q.by_x[xx] = cand;
+                    if (cand.score < q.by_y[yy].score) q.by_y[yy] = cand;
+                    if (cand.score < q.by_xy[xx][yy].score) q.by_xy[xx][yy] = cand;
+                    if (cand.score < q.all.score) q.all = cand;
+                }
+            };
+
+            // Build SR grid quadrants per (seg_len_right). Indexed by sr-grid pointer.
+            // We do this per task within the OpenMP loop below.
+
+            // ---- Build a list of (seg_len_right, sr-grid-pos seg_start) tasks. ----
+            // For determinism in parallel merge, tasks are ordered by (seg_len_right, seg_start).
+            struct Blk1AggTask {
+                int seg_len_right;
+                int seg_start;
+                int inner_right_pos;
+            };
+            std::vector<Blk1AggTask> agg_tasks;
+            agg_tasks.reserve(64);
+            for (int seg_len_right = 1; seg_len_right <= min(SINGLE_MAX_LEN, pos_prev); ++seg_len_right) {
+                if (seg_len_right >= (int)s_right_agg_outer.size()) continue;
+                const auto& s_right_agg_map = s_right_agg_outer[seg_len_right];
+                if (s_right_agg_map.empty()) continue;
+                const int seg_start = pos_prev - seg_len_right + 1;
+                const int inner_right_pos = seg_start - 1;
+                if (inner_right_pos < 0 || inner_right_pos >= nuc_len) continue;
+                if (s_right_agg_map.find(seg_start) == s_right_agg_map.end()) continue;
+                if (inner_right_pos >= (int)agg_tables.c_agg.size()) continue;
+                if (agg_tables.c_agg[inner_right_pos].empty()) continue;
+                agg_tasks.push_back({seg_len_right, seg_start, inner_right_pos});
+            }
+            const int num_agg_tasks = (int)agg_tasks.size();
+
+            // ---- Parallelization setup (mirrors baseline Block 1). ----
+#ifdef _OPENMP
+            const int num_threads_blk1c = omp_get_max_threads();
+#else
+            const int num_threads_blk1c = 1;
+#endif
+            // Reuse function-scope blk1_thread_dense_maps from baseline. Reset
+            // populated slots from prior position(s).
+            const int dense_cap_c = nuc_len * 16;
+            for (int t = 0; t < num_threads_blk1_outer; ++t) {
+                blk1_thread_dense_maps[t].reset(dense_cap_c);
+                blk1_thread_key_order[t].clear();
+            }
+            std::vector<uint64_t> cnt_rb_local_c(num_threads_blk1c, 0);
+            std::vector<uint64_t> cnt_in_local_c(num_threads_blk1c, 0);
+
+            const bool pos_is_last_g = is_last_nuc(pos);
+
+            #pragma omp parallel for schedule(dynamic, 1) if(num_agg_tasks > 1)
+            for (int task_idx = 0; task_idx < num_agg_tasks; ++task_idx) {
+                const Blk1AggTask& tk = agg_tasks[task_idx];
+                const int seg_len_right = tk.seg_len_right;
+                const int seg_start = tk.seg_start;
+                const int inner_right_pos = tk.inner_right_pos;
+
+#ifdef _OPENMP
+                const int tid_c = omp_get_thread_num();
+#else
+                const int tid_c = 0;
+#endif
+                DenseBeamTable& task_dense = blk1_thread_dense_maps[tid_c];
+                std::vector<int>& task_order = blk1_thread_key_order[tid_c];
+
+                const auto& s_right_agg_map = s_right_agg_outer[seg_len_right];
+                auto sr_grid_it = s_right_agg_map.find(seg_start);
+                if (sr_grid_it == s_right_agg_map.end()) continue;
+                const CodonAggGrid& sr_grid = sr_grid_it->second;
+                if (sr_grid.populated_indices.empty()) continue;
+
+                // S_right boundary aa/slot.
+                const int s_right_b_aa = pos_prev / 3;
+                const int s_right_b_slot = pos_prev % 3;
+                const int p_s_right_b = protein[s_right_b_aa];
+                const int ncod_sr_b = n_codon[p_s_right_b];
+                const int s_right_a_aa = seg_start / 3;
+                const int s_right_a_slot = seg_start % 3;
+                const int p_s_right_a = protein[s_right_a_aa];
+                const int ncod_sr_a = n_codon[p_s_right_a];
+
+                bool same_codon_sr = false;
+                if (!same_or_next_codon(s_right_b_aa, s_right_b_slot, bb, slot, same_codon_sr)) continue;
+
+                const bool seam_sr_inner_same_codon = ((inner_right_pos % 3) != 2);
+
+                // Build SR grid quadrant summaries. Indexed by (nuc_qp1, nuc_jm1).
+                GridQuadrants sr_quadrants{};
+                std::array<int8_t, 16> sr_active_qids{};
+                int sr_num_active = 0;
+                build_grid_quadrants(sr_grid,
+                    p_s_right_a, s_right_a_slot, ncod_sr_a,
+                    p_s_right_b, s_right_b_slot, ncod_sr_b,
+                    sr_quadrants, sr_active_qids, sr_num_active);
+
+                // Inner C agg map.
+                const auto& c_inner_agg_map = agg_tables.c_agg[inner_right_pos];
+                if (c_inner_agg_map.empty()) continue;
+
+                const int inner_b_aa = inner_right_pos / 3;
+                const int inner_b_slot = inner_right_pos % 3;
+                const int p_inner_b = protein[inner_b_aa];
+                const int ncod_inner_b = n_codon[p_inner_b];
+
+                // Scratch buffers reused across emits within this task.
+                BeamEntry scratch_rb;
+                BeamEntry scratch_il;
+
+                for (const auto& c_kv : c_inner_agg_map) {
+                    const int inner_left = c_kv.first;
+                    const CodonAggGrid& c_inner_grid = c_kv.second;
+                    if (c_inner_grid.populated_indices.empty()) continue;
+                    const int outer_left_nuc = inner_left - 1;
+                    if (outer_left_nuc < 0) continue;
+                    if ((pos - outer_left_nuc) <= (HAIRPIN_GAP + 2)) continue;
+
+                    const int inner_a_aa = inner_left / 3;
+                    const int inner_a_slot = inner_left % 3;
+                    const int p_inner_a = protein[inner_a_aa];
+                    const int ncod_inner_a = n_codon[p_inner_a];
+
+                    const int aa_o = outer_left_nuc / 3;
+                    const int ii_o = outer_left_nuc % 3;
+                    const int paa_o = protein[aa_o];
+                    const int ncod_o = n_codon[paa_o];
+                    const bool xx_o_locked = (aa_o == inner_a_aa);
+
+                    // Build C grid quadrant summaries. Indexed by (nuc_li, nuc_ri).
+                    // Reuse outer-scope storage by zeroing only previously-active
+                    // quadrants.
+                    GridQuadrants c_quadrants{};
+                    std::array<int8_t, 16> c_active_qids{};
+                    int c_num_active = 0;
+                    build_grid_quadrants(c_inner_grid,
+                        p_inner_a, inner_a_slot, ncod_inner_a,
+                        p_inner_b, inner_b_slot, ncod_inner_b,
+                        c_quadrants, c_active_qids, c_num_active);
+
+                    // Precompute best xx_o per nuc_lo (when !xx_o_locked).
+                    struct NucBest { int xx; double cai; bool valid; };
+                    std::array<NucBest, 4> best_xxo_per_nuc;
+                    for (auto& nb : best_xxo_per_nuc) nb = {-1, 0.0, false};
+                    if (!xx_o_locked) {
+                        for (int xo = 0; xo < ncod_o; ++xo) {
+                            int nlo = nucleotides[paa_o][xo][ii_o];
+                            double xcai = (ii_o == 2) ? codon_cai[paa_o][xo] : 0.0;
+                            if (!best_xxo_per_nuc[nlo].valid || xcai > best_xxo_per_nuc[nlo].cai) {
+                                best_xxo_per_nuc[nlo] = {xo, xcai, true};
+                            }
+                        }
+                    }
+
+                    // ============================================================
+                    // Pre-build SL tasks once per (c_grid). Mirrors baseline sl_tasks.
+                    // ============================================================
+                    struct SLTaskAgg {
+                        int sl_left_pos;
+                        int seg_len_left;
+                        int outer_left2;
+                        int aa_o2, ii_o2, paa_o2, ncod_o2;
+                        bool xx_o2_locked;
+                        bool same_codon_sl;
+                        int p_sl_a, p_sl_b;
+                        int sl_a_slot, sl_b_slot;
+                        int ncod_sl_a, ncod_sl_b;
+                        const CodonAggGrid* grid;
+                        GridQuadrants quadrants;  // indexed by (nuc_i1, nuc_pm1)
+                        std::array<int8_t, 16> active_qids;
+                        int num_active;
+                        std::array<NucBest, 4> best_xx_per_nuc;
+                    };
+                    std::vector<SLTaskAgg> sl_tasks_agg;
+                    sl_tasks_agg.reserve(SINGLE_MAX_LEN);
+                    {
+                        const int seam_pos_left = outer_left_nuc;
+                        if (seam_pos_left >= 1 && seam_pos_left < nuc_len &&
+                            seam_pos_left < (int)agg_tables.s_agg.size()) {
+                            const auto& sl_agg_outer = agg_tables.s_agg[seam_pos_left];
+                            const int max_sl = min(SINGLE_MAX_LEN, seam_pos_left + 1);
+                            for (int seg_len_left = 1; seg_len_left <= max_sl; ++seg_len_left) {
+                                if (seg_len_left >= (int)sl_agg_outer.size()) continue;
+                                const auto& sl_agg_map = sl_agg_outer[seg_len_left];
+                                if (sl_agg_map.empty()) continue;
+                                const int outer_left2 = inner_left - 1 - seg_len_left;
+                                if (outer_left2 < 0) continue;
+                                if ((pos - outer_left2) <= (HAIRPIN_GAP + 2)) continue;
+                                const int sl_left_pos = inner_left - seg_len_left;
+                                auto sl_it = sl_agg_map.find(sl_left_pos);
+                                if (sl_it == sl_agg_map.end()) continue;
+                                const CodonAggGrid& sl_grid = sl_it->second;
+                                if (sl_grid.populated_indices.empty()) continue;
+
+                                SLTaskAgg slt;
+                                slt.sl_left_pos = sl_left_pos;
+                                slt.seg_len_left = seg_len_left;
+                                slt.outer_left2 = outer_left2;
+                                slt.aa_o2 = outer_left2 / 3;
+                                slt.ii_o2 = outer_left2 % 3;
+                                slt.paa_o2 = protein[slt.aa_o2];
+                                slt.ncod_o2 = n_codon[slt.paa_o2];
+                                slt.same_codon_sl = ((inner_left % 3) != 0);
+                                slt.sl_a_slot = sl_left_pos % 3;
+                                slt.sl_b_slot = seam_pos_left % 3;
+                                slt.p_sl_a = protein[sl_left_pos / 3];
+                                slt.p_sl_b = protein[seam_pos_left / 3];
+                                slt.ncod_sl_a = n_codon[slt.p_sl_a];
+                                slt.ncod_sl_b = n_codon[slt.p_sl_b];
+                                slt.xx_o2_locked = (slt.aa_o2 == sl_left_pos / 3);
+                                slt.grid = &sl_grid;
+                                slt.num_active = 0;
+                                // SLTaskAgg's quadrants is fresh (default-initialized
+                                // from struct ctor: active=false for all 16).
+                                build_grid_quadrants(sl_grid,
+                                    slt.p_sl_a, slt.sl_a_slot, slt.ncod_sl_a,
+                                    slt.p_sl_b, slt.sl_b_slot, slt.ncod_sl_b,
+                                    slt.quadrants, slt.active_qids, slt.num_active);
+                                for (auto& nb : slt.best_xx_per_nuc) nb = {-1, 0.0, false};
+                                for (int xo = 0; xo < slt.ncod_o2; ++xo) {
+                                    int nlo = nucleotides[slt.paa_o2][xo][slt.ii_o2];
+                                    double xcai = (slt.ii_o2 == 2) ? codon_cai[slt.paa_o2][xo] : 0.0;
+                                    if (!slt.best_xx_per_nuc[nlo].valid ||
+                                        xcai > slt.best_xx_per_nuc[nlo].cai) {
+                                        slt.best_xx_per_nuc[nlo] = {xo, xcai, true};
+                                    }
+                                }
+                                sl_tasks_agg.push_back(std::move(slt));
+                            }
+                        }
+                    }
+
+                    // ============================================================
+                    // Lambda emit_rb_agg: emit one (xx_o, yy_eff) right-bulge candidate.
+                    // ============================================================
+                    auto emit_rb_agg = [&](const AggBest& c_best, const AggBest& sr_best,
+                                           int xx_inner, int yy_inner,
+                                           int xx_sr, int yy_sr,
+                                           int nuc_li, int nuc_ri,
+                                           int nuc_qp1, int nuc_jm1,
+                                           int xx_o, int yy_eff,
+                                           int nuc_lo, int nuc_ro_eff,
+                                           double loop_e, double cai_yy) {
+                        const double mfe_cand = (double)c_best.mfe + (double)sr_best.mfe + loop_e;
+                        const double cai_cand = (double)c_best.cai + (double)sr_best.cai + cai_yy
+                            + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
+                        const double sc_cand = combined_score(lambda, mfe_cand, cai_cand);
+                        const int compact_idx = outer_left_nuc * 16 + nuc_lo * 4 + nuc_ro_eff;
+                        // Early-rejection like baseline BLK1_AGG.
+                        const BeamEntry& ex_pre = task_dense.slot(compact_idx);
+                        if (ex_pre.score < inf &&
+                            xx_o >= 0 && xx_o < 6 && yy_eff >= 0 && yy_eff < 6) {
+                            const int8_t vi_pre = ex_pre.variant_idx[xx_o][yy_eff];
+                            if (vi_pre >= 0 && sc_cand > ex_pre.variants[vi_pre].score) return;
+                        }
+                        const int c_inner_key = nuc_key_c_nuc(inner_left, inner_right_pos,
+                                                              nuc_li, nuc_ri, nuc_len);
+                        const int s_right_key = codon_beam_key(seg_start, nuc_qp1, nuc_jm1);
+                        scratch_rb.score = sc_cand;
+                        scratch_rb.mfe = mfe_cand;
+                        scratch_rb.cai = cai_cand;
+                        scratch_rb.a = aa_o; scratch_rb.b = bb;
+                        scratch_rb.i = ii_o; scratch_rb.j = slot;
+                        scratch_rb.x = xx_o; scratch_rb.y = yy_eff;
+                        scratch_rb.backtrace_type = (int)DernaManner::MANNER_C_StoC;
+                        scratch_rb.bt_info.len = 6;
+                        scratch_rb.bt_info.data[0] = c_inner_key;
+                        scratch_rb.bt_info.data[1] = s_right_key;
+                        scratch_rb.bt_info.data[2] = xx_inner;
+                        scratch_rb.bt_info.data[3] = yy_inner;
+                        scratch_rb.bt_info.data[4] = xx_sr;
+                        scratch_rb.bt_info.data[5] = yy_sr;
+                        scratch_rb.cs_inner_left = inner_right_pos;
+                        scratch_rb.cs_right_len = seg_len_right;
+                        scratch_rb.last_closed_nuc = -1;
+                        scratch_rb.cs_inner_key = -1;
+                        scratch_rb.cs_right_s_key = -1;
+                        scratch_rb.cs_single_start = -1;
+                        scratch_rb.cs_inner_right = -1;
+                        scratch_rb.cs_pack_outer = -1LL;
+                        if (task_dense.update(compact_idx, sc_cand, scratch_rb))
+                            task_order.push_back(compact_idx);
+                    };
+
+                    auto emit_il_agg = [&](const AggBest& c_best, const AggBest& sr_best,
+                                           const AggBest& sl_best,
+                                           int xx_inner, int yy_inner,
+                                           int xx_sr, int yy_sr,
+                                           int xx_sl, int yy_sl,
+                                           int nuc_li, int nuc_ri,
+                                           int nuc_qp1, int nuc_jm1,
+                                           int nuc_i1, int nuc_pm1,
+                                           int xx_o2, int yy_eff,
+                                           int nuc_lo2, int nuc_ro_eff,
+                                           double loop_e2, double cai_yy,
+                                           int sl_left_pos, int outer_left2,
+                                           int aa_o2, int ii_o2, int paa_o2,
+                                           int seg_len_left) {
+                        const double mfe2 = (double)c_best.mfe + (double)sr_best.mfe
+                                          + (double)sl_best.mfe + loop_e2;
+                        const double cai2 = (double)c_best.cai + (double)sr_best.cai
+                                          + (double)sl_best.cai + cai_yy
+                                          + (ii_o2 == 2 ? codon_cai[paa_o2][xx_o2] : 0.0);
+                        const double sc2 = combined_score(lambda, mfe2, cai2);
+                        const int compact_idx2 = outer_left2 * 16 + nuc_lo2 * 4 + nuc_ro_eff;
+                        const BeamEntry& ex_pre = task_dense.slot(compact_idx2);
+                        if (ex_pre.score < inf &&
+                            xx_o2 >= 0 && xx_o2 < 6 && yy_eff >= 0 && yy_eff < 6) {
+                            const int8_t vi_pre = ex_pre.variant_idx[xx_o2][yy_eff];
+                            if (vi_pre >= 0 && sc2 > ex_pre.variants[vi_pre].score) return;
+                        }
+                        const int c_inner_key = nuc_key_c_nuc(inner_left, inner_right_pos,
+                                                              nuc_li, nuc_ri, nuc_len);
+                        const int s_right_key = codon_beam_key(seg_start, nuc_qp1, nuc_jm1);
+                        const int s_left_key = codon_beam_key(sl_left_pos, nuc_i1, nuc_pm1);
+                        scratch_il.score = sc2;
+                        scratch_il.mfe = mfe2;
+                        scratch_il.cai = cai2;
+                        scratch_il.a = aa_o2; scratch_il.b = bb;
+                        scratch_il.i = ii_o2; scratch_il.j = slot;
+                        scratch_il.x = xx_o2; scratch_il.y = yy_eff;
+                        scratch_il.backtrace_type = (int)DernaManner::MANNER_S_C_StoC;
+                        scratch_il.bt_info.len = 9;
+                        scratch_il.bt_info.data[0] = s_left_key;
+                        scratch_il.bt_info.data[1] = c_inner_key;
+                        scratch_il.bt_info.data[2] = s_right_key;
+                        scratch_il.bt_info.data[3] = xx_sl;
+                        scratch_il.bt_info.data[4] = yy_sl;
+                        scratch_il.bt_info.data[5] = xx_inner;
+                        scratch_il.bt_info.data[6] = yy_inner;
+                        scratch_il.bt_info.data[7] = xx_sr;
+                        scratch_il.bt_info.data[8] = yy_sr;
+                        scratch_il.cs_inner_left = inner_right_pos;
+                        scratch_il.cs_right_len = seg_len_right;
+                        scratch_il.cs_single_start = outer_left_nuc;
+                        scratch_il.cs_inner_right = seg_len_left;
+                        scratch_il.last_closed_nuc = -1;
+                        scratch_il.cs_inner_key = -1;
+                        scratch_il.cs_right_s_key = -1;
+                        scratch_il.cs_pack_outer = -1LL;
+                        if (task_dense.update(compact_idx2, sc2, scratch_il))
+                            task_order.push_back(compact_idx2);
+                    };
+
+                    // ============================================================
+                    // Iterate (c-quadrant, sr-quadrant) pairs. Mirrors baseline's
+                    // (c_ent, sr_ent) outer iteration: each quadrant pair fixes
+                    // (nuc_li, nuc_ri, nuc_qp1, nuc_jm1).
+                    // ============================================================
+                    for (int c_ai = 0; c_ai < c_num_active; ++c_ai) {
+                        const int c_qid = c_active_qids[c_ai];
+                        const QuadrantSummary& cq = c_quadrants[c_qid];
+                        const int nuc_li  = c_qid >> 2;
+                        const int nuc_ri  = c_qid & 3;
+
+                        for (int sr_ai = 0; sr_ai < sr_num_active; ++sr_ai) {
+                            const int sr_qid = sr_active_qids[sr_ai];
+                            const QuadrantSummary& srq = sr_quadrants[sr_qid];
+                            const int nuc_qp1 = sr_qid >> 2;
+                            const int nuc_jm1 = sr_qid & 3;
+
+                            // Iterate yy_eff (outer right codon).
+                            for (int yy_eff = 0; yy_eff < ncod_bb; ++yy_eff) {
+                                if (same_codon_sr) {
+                                    // sr.y must equal yy_eff.
+                                    if (!srq.by_y[yy_eff].valid) continue;
+                                }
+                                const int nuc_ro_eff = nucleotides[pbb][yy_eff][slot];
+                                const double cai_yy = pos_is_last_g ? codon_cai[pbb][yy_eff] : 0.0;
+
+                                // Compute best (c + sr) per c.x  (= xx_inner) — call it best_csr_by_cx.
+                                // Mirrors baseline's separable logic; the "inner_key" relation is:
+                                //   seam_sr_inner_same_codon → sr.x == c.y
+                                //   same_codon_sr             → sr.y == yy_eff (already filtered above)
+                                struct BestCSR {
+                                    double score;
+                                    AggBest c_best;
+                                    AggBest sr_best;
+                                    bool valid;
+                                };
+                                std::array<BestCSR, 6> best_csr_by_cx;
+                                BestCSR best_csr_all{AGG_INF, AggBest{AGG_INF,0,0,-1,false}, AggBest{AGG_INF,0,0,-1,false}, false};
+                                for (auto& b : best_csr_by_cx)
+                                    b = {AGG_INF, AggBest{AGG_INF,0,0,-1,false}, AggBest{AGG_INF,0,0,-1,false}, false};
+
+                                // SR pick: depends on (seam_sr_inner_same_codon, same_codon_sr).
+                                if (!seam_sr_inner_same_codon && !same_codon_sr) {
+                                    // SR fully free → pick srq.all.
+                                    if (!srq.all.valid) continue;
+                                    for (int cx = 0; cx < 6; ++cx) {
+                                        if (!cq.by_x[cx].valid) continue;
+                                        double sc = cq.by_x[cx].score + srq.all.score;
+                                        best_csr_by_cx[cx] = {sc, cq.by_x[cx], srq.all, true};
+                                        if (sc < best_csr_all.score) best_csr_all = best_csr_by_cx[cx];
+                                    }
+                                } else if (!seam_sr_inner_same_codon /*  same_codon_sr */) {
+                                    if (!srq.by_y[yy_eff].valid) continue;
+                                    const auto& sr_pick = srq.by_y[yy_eff];
+                                    for (int cx = 0; cx < 6; ++cx) {
+                                        if (!cq.by_x[cx].valid) continue;
+                                        double sc = cq.by_x[cx].score + sr_pick.score;
+                                        best_csr_by_cx[cx] = {sc, cq.by_x[cx], sr_pick, true};
+                                        if (sc < best_csr_all.score) best_csr_all = best_csr_by_cx[cx];
+                                    }
+                                } else if (!same_codon_sr /* seam_sr_inner_same_codon */) {
+                                    // sr.x == c.y. Use cq.by_xy[cx][cy] paired with srq.by_x[cy].
+                                    for (int cx = 0; cx < 6; ++cx) {
+                                        for (int cy = 0; cy < 6; ++cy) {
+                                            const auto& bc = cq.by_xy[cx][cy];
+                                            if (!bc.valid) continue;
+                                            const auto& bsr = srq.by_x[cy];
+                                            if (!bsr.valid) continue;
+                                            double sc = bc.score + bsr.score;
+                                            if (sc < best_csr_by_cx[cx].score)
+                                                best_csr_by_cx[cx] = {sc, bc, bsr, true};
+                                        }
+                                        if (best_csr_by_cx[cx].valid &&
+                                            best_csr_by_cx[cx].score < best_csr_all.score)
+                                            best_csr_all = best_csr_by_cx[cx];
+                                    }
+                                } else {
+                                    // Both: sr.x == c.y AND sr.y == yy_eff.
+                                    for (int cx = 0; cx < 6; ++cx) {
+                                        for (int cy = 0; cy < 6; ++cy) {
+                                            const auto& bc = cq.by_xy[cx][cy];
+                                            if (!bc.valid) continue;
+                                            const auto& bsr = srq.by_xy[cy][yy_eff];
+                                            if (!bsr.valid) continue;
+                                            double sc = bc.score + bsr.score;
+                                            if (sc < best_csr_by_cx[cx].score)
+                                                best_csr_by_cx[cx] = {sc, bc, bsr, true};
+                                        }
+                                        if (best_csr_by_cx[cx].valid &&
+                                            best_csr_by_cx[cx].score < best_csr_all.score)
+                                            best_csr_all = best_csr_by_cx[cx];
+                                    }
+                                }
+                                if (!best_csr_all.valid) continue;
+
+                                // ---- (1) Right-bulge: emit per nuc_lo, then per xx_o. ----
+                                for (int nuc_lo = 0; nuc_lo < 4; ++nuc_lo) {
+                                    if (!best_xxo_per_nuc[nuc_lo].valid && !xx_o_locked) continue;
+                                    if (BP_pair[nuc_lo + 1][nuc_ro_eff + 1] == 0) continue;
+                                    const double loop_e = score_single_loop_with_mismatch(lambda,
+                                        nuc_lo, nuc_ro_eff, nuc_li, nuc_ri,
+                                        0, seg_len_right,
+                                        nuc_li, nuc_jm1, nuc_lo, nuc_qp1);
+                                    if (loop_e >= inf) continue;
+                                    for (int xx_o = 0; xx_o < ncod_o; ++xx_o) {
+                                        if (nucleotides[paa_o][xx_o][ii_o] != nuc_lo) continue;
+                                        // Pick CSR: locked → best_csr_by_cx[xx_o]; free → all.
+                                        const BestCSR* csr_pick = xx_o_locked
+                                            ? &best_csr_by_cx[xx_o] : &best_csr_all;
+                                        if (!csr_pick->valid) continue;
+                                        cnt_rb_local_c[tid_c]++;
+                                        const AggBest& c_b = csr_pick->c_best;
+                                        const AggBest& sr_b = csr_pick->sr_best;
+                                        const int xx_inner = c_b.cell_idx / NCOD;
+                                        const int yy_inner = c_b.cell_idx % NCOD;
+                                        const int xx_sr = sr_b.cell_idx / NCOD;
+                                        const int yy_sr = sr_b.cell_idx % NCOD;
+                                        emit_rb_agg(c_b, sr_b, xx_inner, yy_inner, xx_sr, yy_sr,
+                                                    nuc_li, nuc_ri, nuc_qp1, nuc_jm1,
+                                                    xx_o, yy_eff, nuc_lo, nuc_ro_eff,
+                                                    loop_e, cai_yy);
+                                    }
+                                }
+
+                                // ---- (2) Internal loop: iterate sl_tasks. ----
+                                // loop_e2 cache: (nuc_lo2, sll_idx, nuc_i1, nuc_pm1) → energy.
+                                // Reset on each yy_eff iteration since nuc_ro_eff changes
+                                // (nuc_ro_eff is part of loop_e2 inputs but not part of the
+                                // 4-d cache key — caller provides ro). Cache keyed by remaining
+                                // varying inputs. nuc_ro_eff is fixed for this inner block.
+                                static constexpr int SLL_MAX_C = SINGLE_MAX_LEN;
+                                const bool use_loop_table_c = ((int)sl_tasks_agg.size() >= 2);
+                                double loop_e2_table_c[4][SLL_MAX_C][4][4];
+                                int8_t loop_e2_table_state_c[4][SLL_MAX_C][4][4];
+                                if (use_loop_table_c) {
+                                    memset(loop_e2_table_state_c, 0, sizeof(loop_e2_table_state_c));
+                                }
+
+                                for (const SLTaskAgg& slt : sl_tasks_agg) {
+                                    const int sll_idx = slt.seg_len_left - 1;
+                                    if (sll_idx < 0 || sll_idx >= SLL_MAX_C) continue;
+
+                                    // Iterate sl quadrants.
+                                    for (int sl_ai = 0; sl_ai < slt.num_active; ++sl_ai) {
+                                        const int sl_qid = slt.active_qids[sl_ai];
+                                        const QuadrantSummary& slq = slt.quadrants[sl_qid];
+                                        const int nuc_i1  = sl_qid >> 2;
+                                        const int nuc_pm1 = sl_qid & 3;
+
+                                        // Combine best_csr with sl_pick. Constraints:
+                                        //   slt.same_codon_sl → sl.y == c.x (== xx_inner from c_best)
+                                        //   slt.xx_o2_locked  → xx_o2 == sl.x
+                                        // Need to pick the winning (c, sr, sl) combination per xx_o2.
+
+                                        // Fast path A: !same_codon_sl && !xx_o2_locked → pick slq.all and best_csr_all.
+                                        if (!slt.same_codon_sl && !slt.xx_o2_locked) {
+                                            if (!best_csr_all.valid) continue;
+                                            if (!slq.all.valid) continue;
+                                            for (int nuc_lo2 = 0; nuc_lo2 < 4; ++nuc_lo2) {
+                                                const auto& nb = slt.best_xx_per_nuc[nuc_lo2];
+                                                if (!nb.valid) continue;
+                                                if (BP_pair[nuc_lo2 + 1][nuc_ro_eff + 1] == 0) continue;
+                                                double loop_e2;
+                                                if (use_loop_table_c) {
+                                                    auto& st = loop_e2_table_state_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1];
+                                                    if (st == 0) {
+                                                        double le = score_single_loop_with_mismatch(lambda,
+                                                            nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                                            slt.seg_len_left, seg_len_right,
+                                                            nuc_i1, nuc_jm1, nuc_pm1, nuc_qp1);
+                                                        if (le < inf) {
+                                                            loop_e2_table_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1] = le;
+                                                            st = 1;
+                                                        } else { st = -1; }
+                                                    }
+                                                    if (st < 0) continue;
+                                                    loop_e2 = loop_e2_table_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1];
+                                                } else {
+                                                    loop_e2 = score_single_loop_with_mismatch(lambda,
+                                                        nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                                        slt.seg_len_left, seg_len_right,
+                                                        nuc_i1, nuc_jm1, nuc_pm1, nuc_qp1);
+                                                    if (loop_e2 >= inf) continue;
+                                                }
+                                                const AggBest& sl_b = slq.all;
+                                                const AggBest& c_b = best_csr_all.c_best;
+                                                const AggBest& sr_b = best_csr_all.sr_best;
+                                                const int xx_inner = c_b.cell_idx / NCOD;
+                                                const int yy_inner = c_b.cell_idx % NCOD;
+                                                const int xx_sr = sr_b.cell_idx / NCOD;
+                                                const int yy_sr = sr_b.cell_idx % NCOD;
+                                                const int xx_sl = sl_b.cell_idx / NCOD;
+                                                const int yy_sl = sl_b.cell_idx % NCOD;
+                                                for (int xo = 0; xo < slt.ncod_o2; ++xo) {
+                                                    if (nucleotides[slt.paa_o2][xo][slt.ii_o2] != nuc_lo2) continue;
+                                                    cnt_in_local_c[tid_c]++;
+                                                    emit_il_agg(c_b, sr_b, sl_b,
+                                                                xx_inner, yy_inner,
+                                                                xx_sr, yy_sr,
+                                                                xx_sl, yy_sl,
+                                                                nuc_li, nuc_ri, nuc_qp1, nuc_jm1,
+                                                                nuc_i1, nuc_pm1,
+                                                                xo, yy_eff, nuc_lo2, nuc_ro_eff,
+                                                                loop_e2, cai_yy,
+                                                                slt.sl_left_pos, slt.outer_left2,
+                                                                slt.aa_o2, slt.ii_o2, slt.paa_o2,
+                                                                slt.seg_len_left);
+                                                }
+                                            }
+                                            continue;
+                                        }
+
+                                        // Fast path B: same_codon_sl && !xx_o2_locked.
+                                        // sl.y == c.x = xx_inner (= cx). Pick best across cx of (csr_by_cx + slq.by_y[cx]).
+                                        if (slt.same_codon_sl && !slt.xx_o2_locked) {
+                                            BestCSR sf_pick{AGG_INF, AggBest{AGG_INF,0,0,-1,false}, AggBest{AGG_INF,0,0,-1,false}, false};
+                                            AggBest sf_sl{AGG_INF, 0, 0, -1, false};
+                                            for (int cx = 0; cx < 6; ++cx) {
+                                                if (!best_csr_by_cx[cx].valid) continue;
+                                                const auto& sl_pick = slq.by_y[cx];
+                                                if (!sl_pick.valid) continue;
+                                                double total = best_csr_by_cx[cx].score + sl_pick.score;
+                                                if (total < sf_pick.score) {
+                                                    sf_pick = {total, best_csr_by_cx[cx].c_best,
+                                                               best_csr_by_cx[cx].sr_best, true};
+                                                    sf_sl = sl_pick;
+                                                }
+                                            }
+                                            if (!sf_pick.valid) continue;
+                                            for (int nuc_lo2 = 0; nuc_lo2 < 4; ++nuc_lo2) {
+                                                const auto& nb = slt.best_xx_per_nuc[nuc_lo2];
+                                                if (!nb.valid) continue;
+                                                if (BP_pair[nuc_lo2 + 1][nuc_ro_eff + 1] == 0) continue;
+                                                double loop_e2;
+                                                if (use_loop_table_c) {
+                                                    auto& st = loop_e2_table_state_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1];
+                                                    if (st == 0) {
+                                                        double le = score_single_loop_with_mismatch(lambda,
+                                                            nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                                            slt.seg_len_left, seg_len_right,
+                                                            nuc_i1, nuc_jm1, nuc_pm1, nuc_qp1);
+                                                        if (le < inf) {
+                                                            loop_e2_table_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1] = le;
+                                                            st = 1;
+                                                        } else { st = -1; }
+                                                    }
+                                                    if (st < 0) continue;
+                                                    loop_e2 = loop_e2_table_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1];
+                                                } else {
+                                                    loop_e2 = score_single_loop_with_mismatch(lambda,
+                                                        nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                                        slt.seg_len_left, seg_len_right,
+                                                        nuc_i1, nuc_jm1, nuc_pm1, nuc_qp1);
+                                                    if (loop_e2 >= inf) continue;
+                                                }
+                                                const AggBest& c_b = sf_pick.c_best;
+                                                const AggBest& sr_b = sf_pick.sr_best;
+                                                const int xx_inner = c_b.cell_idx / NCOD;
+                                                const int yy_inner = c_b.cell_idx % NCOD;
+                                                const int xx_sr = sr_b.cell_idx / NCOD;
+                                                const int yy_sr = sr_b.cell_idx % NCOD;
+                                                const int xx_sl = sf_sl.cell_idx / NCOD;
+                                                const int yy_sl = sf_sl.cell_idx % NCOD;
+                                                for (int xo = 0; xo < slt.ncod_o2; ++xo) {
+                                                    if (nucleotides[slt.paa_o2][xo][slt.ii_o2] != nuc_lo2) continue;
+                                                    cnt_in_local_c[tid_c]++;
+                                                    emit_il_agg(c_b, sr_b, sf_sl,
+                                                                xx_inner, yy_inner,
+                                                                xx_sr, yy_sr,
+                                                                xx_sl, yy_sl,
+                                                                nuc_li, nuc_ri, nuc_qp1, nuc_jm1,
+                                                                nuc_i1, nuc_pm1,
+                                                                xo, yy_eff, nuc_lo2, nuc_ro_eff,
+                                                                loop_e2, cai_yy,
+                                                                slt.sl_left_pos, slt.outer_left2,
+                                                                slt.aa_o2, slt.ii_o2, slt.paa_o2,
+                                                                slt.seg_len_left);
+                                                }
+                                            }
+                                            continue;
+                                        }
+
+                                        // Slow path: variant lookup depends on xx_o2.
+                                        for (int xx_o2 = 0; xx_o2 < slt.ncod_o2; ++xx_o2) {
+                                            const int nuc_lo2 = nucleotides[slt.paa_o2][xx_o2][slt.ii_o2];
+                                            if (BP_pair[nuc_lo2 + 1][nuc_ro_eff + 1] == 0) continue;
+                                            double loop_e2;
+                                            if (use_loop_table_c) {
+                                                auto& st = loop_e2_table_state_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1];
+                                                if (st == 0) {
+                                                    double le = score_single_loop_with_mismatch(lambda,
+                                                        nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                                        slt.seg_len_left, seg_len_right,
+                                                        nuc_i1, nuc_jm1, nuc_pm1, nuc_qp1);
+                                                    if (le < inf) {
+                                                        loop_e2_table_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1] = le;
+                                                        st = 1;
+                                                    } else { st = -1; }
+                                                }
+                                                if (st < 0) continue;
+                                                loop_e2 = loop_e2_table_c[nuc_lo2][sll_idx][nuc_i1][nuc_pm1];
+                                            } else {
+                                                loop_e2 = score_single_loop_with_mismatch(lambda,
+                                                    nuc_lo2, nuc_ro_eff, nuc_li, nuc_ri,
+                                                    slt.seg_len_left, seg_len_right,
+                                                    nuc_i1, nuc_jm1, nuc_pm1, nuc_qp1);
+                                                if (loop_e2 >= inf) continue;
+                                            }
+                                            cnt_in_local_c[tid_c]++;
+
+                                            // Pick best (c, sr, sl) for this xx_o2.
+                                            BestCSR il_pick{AGG_INF, AggBest{AGG_INF,0,0,-1,false}, AggBest{AGG_INF,0,0,-1,false}, false};
+                                            AggBest il_sl{AGG_INF, 0, 0, -1, false};
+                                            if (slt.same_codon_sl) {
+                                                // sl.y == cx; if xx_o2_locked, sl.x == xx_o2 → use slq.by_xy[xx_o2][cx].
+                                                for (int cx = 0; cx < 6; ++cx) {
+                                                    if (!best_csr_by_cx[cx].valid) continue;
+                                                    const AggBest sl_pick = slt.xx_o2_locked
+                                                        ? slq.by_xy[xx_o2][cx]
+                                                        : slq.by_y[cx];
+                                                    if (!sl_pick.valid) continue;
+                                                    double total = best_csr_by_cx[cx].score + sl_pick.score;
+                                                    if (total < il_pick.score) {
+                                                        il_pick = {total, best_csr_by_cx[cx].c_best,
+                                                                   best_csr_by_cx[cx].sr_best, true};
+                                                        il_sl = sl_pick;
+                                                    }
+                                                }
+                                            } else {
+                                                // !same_codon_sl: SL fully free (mod xx_o2_locked).
+                                                AggBest sl_pick = slt.xx_o2_locked
+                                                    ? slq.by_x[xx_o2]
+                                                    : slq.all;
+                                                if (sl_pick.valid && best_csr_all.valid) {
+                                                    il_pick = {best_csr_all.score + sl_pick.score,
+                                                               best_csr_all.c_best,
+                                                               best_csr_all.sr_best, true};
+                                                    il_sl = sl_pick;
+                                                }
+                                            }
+                                            if (!il_pick.valid) continue;
+                                            const AggBest& c_b = il_pick.c_best;
+                                            const AggBest& sr_b = il_pick.sr_best;
+                                            const int xx_inner = c_b.cell_idx / NCOD;
+                                            const int yy_inner = c_b.cell_idx % NCOD;
+                                            const int xx_sr = sr_b.cell_idx / NCOD;
+                                            const int yy_sr = sr_b.cell_idx % NCOD;
+                                            const int xx_sl = il_sl.cell_idx / NCOD;
+                                            const int yy_sl = il_sl.cell_idx % NCOD;
+                                            emit_il_agg(c_b, sr_b, il_sl,
+                                                        xx_inner, yy_inner,
+                                                        xx_sr, yy_sr,
+                                                        xx_sl, yy_sl,
+                                                        nuc_li, nuc_ri, nuc_qp1, nuc_jm1,
+                                                        nuc_i1, nuc_pm1,
+                                                        xx_o2, yy_eff, nuc_lo2, nuc_ro_eff,
+                                                        loop_e2, cai_yy,
+                                                        slt.sl_left_pos, slt.outer_left2,
+                                                        slt.aa_o2, slt.ii_o2, slt.paa_o2,
+                                                        slt.seg_len_left);
+                                        }  // end xx_o2
+                                    }  // end sl quadrants
+                                }  // end sl_tasks_agg
+                            }  // end yy_eff
+                        }  // end sr_qid
+                    }  // end c_qid
+                }  // end inner_left (c_inner_agg_map)
+            }  // end OpenMP for over agg_tasks
+
+            // -------- Merge phase (mirrors baseline Block 1). --------
+            {
+                BeamEntry scratch;
+                auto replay_entry = [&](int orig_key, const BeamEntry& src) {
+                    for (const auto& v : src.variants) {
+                        scratch = src;
+                        scratch.x = v.x; scratch.y = v.y;
+                        scratch.mfe = v.mfe; scratch.cai = v.cai; scratch.score = v.score;
+                        scratch.backtrace_type = v.backtrace_type;
+                        scratch.last_closed_nuc = v.last_closed_nuc;
+                        scratch.bt_info = v.bt_info;
+                        scratch.cs_inner_key    = v.cs_inner_key;
+                        scratch.cs_right_s_key  = v.cs_right_s_key;
+                        scratch.cs_right_len    = v.cs_right_len;
+                        scratch.cs_single_start = v.cs_single_start;
+                        scratch.cs_inner_left   = v.cs_inner_left;
+                        scratch.cs_inner_right  = v.cs_inner_right;
+                        scratch.cs_pack_outer   = v.cs_pack_outer;
+                        scratch.variants.clear();
+                        update_derna(curr_c, orig_key, v.score, scratch);
+                    }
+                };
+                for (int t = 0; t < num_threads_blk1c; ++t) {
+                    DenseBeamTable& td = blk1_thread_dense_maps[t];
+                    const auto& order = blk1_thread_key_order[t];
+                    for (int compact_idx : order) {
+                        const BeamEntry& src = td.slot(compact_idx);
+                        if (src.score >= inf) continue;
+                        const int left_pos = compact_idx >> 4;
+                        const int low      = compact_idx & 0xF;
+                        const int orig_key = (left_pos * nuc_len + pos) * 16 + low;
+                        replay_entry(orig_key, src);
+                    }
+                }
+                for (int t = 0; t < num_threads_blk1c; ++t) {
+                    cnt_blk1_rightbulge += cnt_rb_local_c[t];
+                    cnt_blk1_internal  += cnt_in_local_c[t];
+                }
+            }
+        }  // end new closure
+#else  // !USE_CODON_LOOKUP_CLOSURE — original Block 1 path
         if (pos >= 5) {  // Block 1 direct right-bulge + left-bulge (matches LCDSfold S_CtoC + CStoC behavior)
             // --- Opt A: Precompute beam_threshold for early-exit score bound ---
             // Use the beamsize-th best score (the cutoff for pruning) as threshold.
@@ -1698,9 +3752,11 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
             static constexpr double blk1_global_best_sl = 0.0;
 
             // --- Opt A: min_loop_energy (most negative possible loop_e from score_single_loop_with_mismatch) ---
-            // Stacking energy minimum is approximately -330 cKcal/mol (from stackE table).
-            // For bulge/internal loops, energies are typically positive. Use a loose safe bound.
-            static const double blk1_min_loop_e = -340.0;  // loose lower bound on stacking/loop energy
+            // Stacking minimum ≈ -340 cKcal (only relevant for n1=n2=0, which Block 1 doesn't
+            // hit). For Block 1's geometry: int11_37=-230, int22_37=-260, plus mismatch slack.
+            // Tightened tests (-310, -260) gave NO measurable runtime improvement — the bound
+            // prune doesn't bind often. Kept loose at -340 for safety margin.
+            static const double blk1_min_loop_e = -340.0;
 
             // ---- Parallelization setup ----
             // Build a flat list of (seg_len_right, s_right_key, s_right_ent*) tasks so we can
@@ -1733,6 +3789,27 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 }
             }
 
+            // Selective Block 1 (Approach c): only run Block 1 for tuples whose
+            // CS entry was DROPPED by the prune at pos_prev. Tuples whose CS
+            // entry survived (or which never produced a CS entry due to geometry)
+            // are skipped. Gated by env var DERNA_SELECTIVE_BLK1=1.
+            static const bool selective_blk1 = []() {
+                const char* e = std::getenv("DERNA_SELECTIVE_BLK1");
+                return e && e[0] == '1';
+            }();
+            // DERNA_BLK1_STUB=1 disables Block 1 entirely (for testing whether
+            // the CS path alone is lossless).
+            static const bool blk1_stub = []() {
+                const char* e = std::getenv("DERNA_BLK1_STUB");
+                return e && e[0] == '1';
+            }();
+            const std::unordered_set<uint64_t>* dropped_units_ptr = nullptr;
+            if (selective_blk1 && pos_prev >= 0 && pos_prev < (int)tab_cs_dropped_units.size()
+                && tab_cs_selective_active[pos_prev]) {
+                dropped_units_ptr = &tab_cs_dropped_units[pos_prev];
+            }
+            if (blk1_stub) blk1_tasks.clear();
+
             if (!blk1_tasks.empty()) {
                 const int num_tasks = (int)blk1_tasks.size();
 #ifdef _OPENMP
@@ -1745,8 +3822,37 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 // of pushing every candidate into a raw buffer. After the parallel region
                 // we replay each thread's entries (in its insertion order, in thread-id
                 // order) into curr_c so the final result is deterministic and bit-identical.
-                std::vector<DernaBeamMap> thread_maps(num_threads_blk1);
-                std::vector<std::vector<int>> thread_key_order(num_threads_blk1);
+                //
+                // Default path uses blk1_thread_dense_maps (function-scope hoisted dense
+                // vectors, reset per pos). BLK1_DENSE=0 falls back to the prior
+                // DernaBeamMap path for A/B comparison.
+                std::vector<DernaBeamMap> thread_maps(blk1_use_dense ? 0 : num_threads_blk1);
+                std::vector<std::vector<int>> thread_key_order_legacy(blk1_use_dense ? 0 : num_threads_blk1);
+                if (blk1_use_dense) {
+                    // Reset only the populated slots from the previous pos. data_ stays
+                    // allocated across positions; capacity grows on demand.
+                    const int dense_cap = nuc_len * 16;
+                    for (int t = 0; t < num_threads_blk1_outer; ++t) {
+                        blk1_thread_dense_maps[t].reset(dense_cap);
+                        blk1_thread_key_order[t].clear();
+                    }
+                }
+                // BLK1_AGG_DIAG: per-thread per-(idx,x,y) hit-count vector, sized
+                // and zeroed at the start of every pos. This vector is thread-local
+                // and accessed from inside DenseBeamTable::update; we use a small
+                // parallel section here to reset on each thread.
+                if (blk1_agg_diag_enabled() && blk1_use_dense) {
+                    const size_t need = (size_t)nuc_len * 16ull * 36ull;
+                    #pragma omp parallel
+                    {
+                        if (g_blk1_agg_hits_per_xy.size() < need) {
+                            g_blk1_agg_hits_per_xy.assign(need, 0);
+                        } else {
+                            std::fill(g_blk1_agg_hits_per_xy.begin(),
+                                      g_blk1_agg_hits_per_xy.begin() + need, 0);
+                        }
+                    }
+                }
                 std::vector<uint64_t> cnt_rb_local(num_threads_blk1, 0);
                 std::vector<uint64_t> cnt_in_local(num_threads_blk1, 0);
 
@@ -1786,8 +3892,9 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
 #else
                     const int tid_blk1 = 0;
 #endif
-                    DernaBeamMap& task_map = thread_maps[tid_blk1];
-                    auto& task_order = thread_key_order[tid_blk1];
+                    DernaBeamMap* task_map_ptr = blk1_use_dense ? nullptr : &thread_maps[tid_blk1];
+                    DenseBeamTable* task_dense_ptr = blk1_use_dense ? &blk1_thread_dense_maps[tid_blk1] : nullptr;
+                    std::vector<int>& task_order = blk1_use_dense ? blk1_thread_key_order[tid_blk1] : thread_key_order_legacy[tid_blk1];
                     const auto& c_flat_blk1 = *tk.c_flat_ptr;
                     if (sigma(s_right_ent.b, s_right_ent.j) != pos_prev) continue;
                     if (sigma(s_right_ent.a, s_right_ent.i) != seg_start) continue;
@@ -1827,6 +3934,18 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                         const int c_key = c_kv.first;
                         const BeamEntry& c_ent = *c_kv.second;
                         if (sigma(c_ent.b, c_ent.j) != closed_right) continue;
+
+                        // Selective Block 1: skip (c_key, s_right_key) tuples whose
+                        // CS entry was NOT dropped by the prune at pos_prev.
+                        // Surviving CS tuples are covered by CS_to_C / S_CS_to_C
+                        // closures (with iv-wrap completing the inner-C variant
+                        // span). Non-producer tuples (no CS entry at all) are also
+                        // safely skipped — they have no Block 1 work.
+                        if (dropped_units_ptr) {
+                            const uint64_t unit_pack = pack_cs_blk1_unit(
+                                closed_right, seg_len_right, s_right_key, c_key);
+                            if (dropped_units_ptr->count(unit_pack) == 0) continue;
+                        }
 
                         // Seam consistency between C right end and S right start.
                         if ((closed_right % 3) != 2) {
@@ -1973,6 +4092,17 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                         // → find best seam-compatible variants in O(8) instead of O(512).
 
                         // Lambda to emit a right-bulge candidate for a given (cvar, srvar, xx_o, yy).
+                        // OPT1: thread-local scratch BeamEntry reused across emit calls.
+                        // Default-constructed once per Block 1 task; the per-call fields are
+                        // overwritten in the lambdas. Saves ~120 B of default-init per call
+                        // (variant_idx[6][6] + cs_* fields + last_closed_nuc), and every
+                        // emit_rb/emit_il invocation now skips the BeamEntry constructor.
+                        // Fields not touched by these lambdas (last_closed_nuc, cs_inner_key,
+                        // cs_right_s_key, cs_pack_outer) match the constructor defaults
+                        // (-1 / -1LL), which matches the prior behavior.
+                        BeamEntry scratch_rb;
+                        BeamEntry scratch_il;
+
                         auto emit_rb = [&](const XYVariant& cvar, const XYVariant& srvar,
                                            int xx_o, int yy_eff, int nuc_lo, int nuc_ro_eff,
                                            double loop_e, double cai_yy) {
@@ -1981,14 +4111,42 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                 + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
                             double sc_cand = combined_score(lambda, mfe_cand, cai_cand);
                             int key_cl = nuc_key_c_nuc(outer_left_nuc, pos, nuc_lo, nuc_ro_eff, nuc_len);
-                            BeamEntry ent_cl(sc_cand, aa_o, bb, ii_o, slot, xx_o, yy_eff,
-                                             (int)DernaManner::MANNER_C_StoC, mfe_cand, cai_cand);
-                            ent_cl.bt_info = {c_key, s_right_key, cvar.x, cvar.y, srvar.x, srvar.y};
-                            ent_cl.cs_inner_left = closed_right;
-                            ent_cl.cs_right_len = seg_len_right;
-                            check_c_entry_invariant(lambda, ent_cl, "Blk1_C_StoC", pos);
-                            if (task_map.find(key_cl) == task_map.end()) task_order.push_back(key_cl);
-                            update_derna(task_map, key_cl, sc_cand, ent_cl);
+                            // BLK1_AGG: early-rejection (same logic as emit_il above).
+                            if (blk1_agg_enabled && task_dense_ptr) {
+                                const int compact_idx_pre = outer_left_nuc * 16 + nuc_lo * 4 + nuc_ro_eff;
+                                const BeamEntry& ex_pre = task_dense_ptr->slot(compact_idx_pre);
+                                if (ex_pre.score < inf &&
+                                    xx_o >= 0 && xx_o < 6 && yy_eff >= 0 && yy_eff < 6) {
+                                    const int8_t vi_pre = ex_pre.variant_idx[xx_o][yy_eff];
+                                    if (vi_pre >= 0 && sc_cand > ex_pre.variants[vi_pre].score) {
+                                        return;
+                                    }
+                                }
+                            }
+                            scratch_rb.score = sc_cand;
+                            scratch_rb.mfe = mfe_cand;
+                            scratch_rb.cai = cai_cand;
+                            scratch_rb.a = aa_o; scratch_rb.b = bb;
+                            scratch_rb.i = ii_o; scratch_rb.j = slot;
+                            scratch_rb.x = xx_o; scratch_rb.y = yy_eff;
+                            scratch_rb.backtrace_type = (int)DernaManner::MANNER_C_StoC;
+                            scratch_rb.bt_info.len = 6;
+                            scratch_rb.bt_info.data[0] = c_key;
+                            scratch_rb.bt_info.data[1] = s_right_key;
+                            scratch_rb.bt_info.data[2] = cvar.x;
+                            scratch_rb.bt_info.data[3] = cvar.y;
+                            scratch_rb.bt_info.data[4] = srvar.x;
+                            scratch_rb.bt_info.data[5] = srvar.y;
+                            scratch_rb.cs_inner_left = closed_right;
+                            scratch_rb.cs_right_len = seg_len_right;
+                            check_c_entry_invariant(lambda, scratch_rb, "Blk1_C_StoC", pos);
+                            if (task_dense_ptr) {
+                                const int compact_idx = outer_left_nuc * 16 + nuc_lo * 4 + nuc_ro_eff;
+                                if (task_dense_ptr->update(compact_idx, sc_cand, scratch_rb))
+                                    task_order.push_back(compact_idx);
+                            } else {
+                                if (update_derna(*task_map_ptr, key_cl, sc_cand, scratch_rb)) task_order.push_back(key_cl);
+                            }
                         };
 
                         // Lambda to emit an internal loop candidate.
@@ -2003,17 +4161,51 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                 + (ii_o2 == 2 ? codon_cai[paa_o2][xx_o2] : 0.0);
                             double sc2 = combined_score(lambda, mfe2, cai2);
                             int key2 = nuc_key_c_nuc(outer_left2, pos, nuc_lo2, nuc_ro_eff, nuc_len);
-                            BeamEntry ent2(sc2, aa_o2, bb, ii_o2, slot, xx_o2, yy_eff,
-                                           (int)DernaManner::MANNER_S_C_StoC, mfe2, cai2);
-                            ent2.bt_info = {s_left_key, c_key, s_right_key,
-                                            slvar.x, slvar.y, cvar.x, cvar.y, srvar.x, srvar.y};
-                            ent2.cs_inner_left = closed_right;
-                            ent2.cs_right_len = seg_len_right;
-                            ent2.cs_single_start = outer_left_nuc;
-                            ent2.cs_inner_right = seg_len_left;
-                            check_c_entry_invariant(lambda, ent2, "Blk1_S_C_StoC", pos);
-                            if (task_map.find(key2) == task_map.end()) task_order.push_back(key2);
-                            update_derna(task_map, key2, sc2, ent2);
+                            // BLK1_AGG: early-rejection. If the dense slot already holds
+                            // a (xx_o2, yy_eff) variant with strictly-better score, skip
+                            // the scratch_il build + update_derna call. The variant-merge
+                            // path would have early-returned on this anyway (99.83% of
+                            // calls per BLK1_AGG_DIAG measurement on P01707).
+                            if (blk1_agg_enabled && task_dense_ptr) {
+                                const int compact_idx2_pre = outer_left2 * 16 + nuc_lo2 * 4 + nuc_ro_eff;
+                                const BeamEntry& ex_pre = task_dense_ptr->slot(compact_idx2_pre);
+                                if (ex_pre.score < inf &&
+                                    xx_o2 >= 0 && xx_o2 < 6 && yy_eff >= 0 && yy_eff < 6) {
+                                    const int8_t vi_pre = ex_pre.variant_idx[xx_o2][yy_eff];
+                                    if (vi_pre >= 0 && sc2 > ex_pre.variants[vi_pre].score) {
+                                        return;  // skip — full update path would have done so too
+                                    }
+                                }
+                            }
+                            scratch_il.score = sc2;
+                            scratch_il.mfe = mfe2;
+                            scratch_il.cai = cai2;
+                            scratch_il.a = aa_o2; scratch_il.b = bb;
+                            scratch_il.i = ii_o2; scratch_il.j = slot;
+                            scratch_il.x = xx_o2; scratch_il.y = yy_eff;
+                            scratch_il.backtrace_type = (int)DernaManner::MANNER_S_C_StoC;
+                            scratch_il.bt_info.len = 9;
+                            scratch_il.bt_info.data[0] = s_left_key;
+                            scratch_il.bt_info.data[1] = c_key;
+                            scratch_il.bt_info.data[2] = s_right_key;
+                            scratch_il.bt_info.data[3] = slvar.x;
+                            scratch_il.bt_info.data[4] = slvar.y;
+                            scratch_il.bt_info.data[5] = cvar.x;
+                            scratch_il.bt_info.data[6] = cvar.y;
+                            scratch_il.bt_info.data[7] = srvar.x;
+                            scratch_il.bt_info.data[8] = srvar.y;
+                            scratch_il.cs_inner_left = closed_right;
+                            scratch_il.cs_right_len = seg_len_right;
+                            scratch_il.cs_single_start = outer_left_nuc;
+                            scratch_il.cs_inner_right = seg_len_left;
+                            check_c_entry_invariant(lambda, scratch_il, "Blk1_S_C_StoC", pos);
+                            if (task_dense_ptr) {
+                                const int compact_idx2 = outer_left2 * 16 + nuc_lo2 * 4 + nuc_ro_eff;
+                                if (task_dense_ptr->update(compact_idx2, sc2, scratch_il))
+                                    task_order.push_back(compact_idx2);
+                            } else {
+                                if (update_derna(*task_map_ptr, key2, sc2, scratch_il)) task_order.push_back(key2);
+                            }
                         };
 
                         // Iterate yy values, then (xx_o) for right-bulge and
@@ -2305,31 +4497,49 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 // resulting curr_c state is actually order-independent. The ordered iteration
                 // just makes the merge reproducible across runs.
                 BeamEntry scratch;
+                auto replay_entry = [&](int orig_key, const BeamEntry& src) {
+                    // Inject each variant as a candidate into curr_c so variant-level
+                    // dedup/tiebreak runs against whatever curr_c already holds.
+                    for (const auto& v : src.variants) {
+                        scratch = src;            // copy static fields (a,b,i,j,...)
+                        scratch.x = v.x; scratch.y = v.y;
+                        scratch.mfe = v.mfe; scratch.cai = v.cai; scratch.score = v.score;
+                        scratch.backtrace_type = v.backtrace_type;
+                        scratch.last_closed_nuc = v.last_closed_nuc;
+                        scratch.bt_info = v.bt_info;
+                        scratch.cs_inner_key    = v.cs_inner_key;
+                        scratch.cs_right_s_key  = v.cs_right_s_key;
+                        scratch.cs_right_len    = v.cs_right_len;
+                        scratch.cs_single_start = v.cs_single_start;
+                        scratch.cs_inner_left   = v.cs_inner_left;
+                        scratch.cs_inner_right  = v.cs_inner_right;
+                        scratch.cs_pack_outer   = v.cs_pack_outer;
+                        scratch.variants.clear();  // update_derna reads only top-level.
+                        update_derna(curr_c, orig_key, v.score, scratch);
+                    }
+                };
                 for (int t = 0; t < num_threads_blk1; ++t) {
-                    DernaBeamMap& tm = thread_maps[t];
-                    const auto& order = thread_key_order[t];
-                    for (int key : order) {
-                        auto it = tm.find(key);
-                        if (it == tm.end()) continue;
-                        const BeamEntry& src = it->second;
-                        // Inject each variant as a candidate into curr_c so variant-level
-                        // dedup/tiebreak runs against whatever curr_c already holds.
-                        for (const auto& v : src.variants) {
-                            scratch = src;            // copy static fields (a,b,i,j,...)
-                            scratch.x = v.x; scratch.y = v.y;
-                            scratch.mfe = v.mfe; scratch.cai = v.cai; scratch.score = v.score;
-                            scratch.backtrace_type = v.backtrace_type;
-                            scratch.last_closed_nuc = v.last_closed_nuc;
-                            scratch.bt_info = v.bt_info;
-                            scratch.cs_inner_key    = v.cs_inner_key;
-                            scratch.cs_right_s_key  = v.cs_right_s_key;
-                            scratch.cs_right_len    = v.cs_right_len;
-                            scratch.cs_single_start = v.cs_single_start;
-                            scratch.cs_inner_left   = v.cs_inner_left;
-                            scratch.cs_inner_right  = v.cs_inner_right;
-                            scratch.cs_pack_outer   = v.cs_pack_outer;
-                            scratch.variants.clear();  // update_derna reads only top-level.
-                            update_derna(curr_c, key, v.score, scratch);
+                    if (blk1_use_dense) {
+                        DenseBeamTable& td = blk1_thread_dense_maps[t];
+                        const auto& order = blk1_thread_key_order[t];
+                        for (int compact_idx : order) {
+                            const BeamEntry& src = td.slot(compact_idx);
+                            if (src.score >= inf) continue;  // shouldn't happen but safe
+                            // Reconstruct original key:
+                            // compact_idx = left_pos*16 + (nuc_lo*4 + nuc_ro)
+                            // orig_key   = (left_pos*nuc_len + pos)*16 + (nuc_lo*4 + nuc_ro)
+                            const int left_pos = compact_idx >> 4;
+                            const int low      = compact_idx & 0xF;
+                            const int orig_key = (left_pos * nuc_len + pos) * 16 + low;
+                            replay_entry(orig_key, src);
+                        }
+                    } else {
+                        DernaBeamMap& tm = thread_maps[t];
+                        const auto& order = thread_key_order_legacy[t];
+                        for (int key : order) {
+                            auto it = tm.find(key);
+                            if (it == tm.end()) continue;
+                            replay_entry(key, it->second);
                         }
                     }
                 }
@@ -2338,8 +4548,65 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                     cnt_blk1_rightbulge += cnt_rb_local[t];
                     cnt_blk1_internal  += cnt_in_local[t];
                 }
+                // VARDIST diagnostic: Block 1's per-thread dense task_maps. Each
+                // populated dense slot is by-construction a single (left_pos,
+                // nuc_lo, nuc_ro) bucket, so avg_buckets_used should be 1.0
+                // and avg_variants_per_bucket should equal avg_variants.
+                if (vardist_diag_enabled() && blk1_use_dense) {
+                    for (int t = 0; t < num_threads_blk1; ++t) {
+                        char tag[32];
+                        snprintf(tag, sizeof(tag), "Blk1_t%d", t);
+                        vardist_measure_dense(pos, tag,
+                            blk1_thread_dense_maps[t],
+                            blk1_thread_key_order[t],
+                            protein);
+                    }
+                }
+                // BLK1_DIAG=1: per-pos task_map density log. Default off (lossless).
+                {
+                    static const bool blk1_diag = []() {
+                        const char* e = std::getenv("BLK1_DIAG");
+                        return e && e[0] == '1';
+                    }();
+                    if (blk1_diag) {
+                        for (int t = 0; t < num_threads_blk1; ++t) {
+                            int min_key = INT_MAX, max_key = INT_MIN;
+                            std::set<int> distinct_lefts;
+                            size_t sz = 0;
+                            if (blk1_use_dense) {
+                                const auto& order = blk1_thread_key_order[t];
+                                if (order.empty()) continue;
+                                sz = order.size();
+                                for (int compact_idx : order) {
+                                    const int left_pos = compact_idx >> 4;
+                                    const int low      = compact_idx & 0xF;
+                                    const int orig_k = (left_pos * nuc_len + pos) * 16 + low;
+                                    if (orig_k < min_key) min_key = orig_k;
+                                    if (orig_k > max_key) max_key = orig_k;
+                                    distinct_lefts.insert(left_pos);
+                                }
+                            } else {
+                                const DernaBeamMap& tm = thread_maps[t];
+                                if (tm.empty()) continue;
+                                sz = tm.size();
+                                for (const auto& kv : tm) {
+                                    int k = kv.first;
+                                    if (k < min_key) min_key = k;
+                                    if (k > max_key) max_key = k;
+                                    distinct_lefts.insert(nuc_key_c_to_left(k, nuc_len));
+                                }
+                            }
+                            fprintf(stderr,
+                                "BLK1_DIAG pos=%d tid=%d size=%zu min_key=%d max_key=%d "
+                                "distinct_left=%zu nuc_len=%d span=%d\n",
+                                pos, t, sz, min_key, max_key,
+                                distinct_lefts.size(), nuc_len, max_key - min_key + 1);
+                        }
+                    }
+                }
             }  // end if (!blk1_tasks.empty())
         }  // end Block 1
+#endif  // USE_CODON_LOOKUP_CLOSURE
 
         // ---------- Special-hairpin seeding (LCDSfold initialize_Special_HP_LD port) ----------
         // For each sp_loops key whose length L ends at `pos`, enumerate codon choices realizing
@@ -2402,23 +4669,26 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
         // SCLeft[pos_prev] = S_left + C_inner composites where C_inner ends at pos_prev.
         // The outer pair right end is pos; left end is S_left_start - 1.
         // Loop shape: left_unpaired = S_left_len, right_unpaired = 0.
+        // NOTE: this path is NOT redundant with MANNER_S_CtoC at line 2815+ — that path
+        // only uses the BEST S variant when codons differ (line 2854-2865), while SCLeft
+        // enumerates all S variants. Stubbing this drops P01707 to gap=49.9.
         if (!prev_sc_left_flat.empty()) {
             for (int yy = 0; yy < ncod_bb; ++yy) {
                 for (const auto& kv : prev_sc_left_flat) {
                     const BeamEntry& scl_ent = *kv.second;
 
                     // SCLeft must be immediately to the left of pos (same_or_next_codon).
+                    // The seam check uses the entry's geometry (a, b, i, j), which is
+                    // shared across all variants in the merged entry.
                     bool same_codon_scl = false;
                     if (!same_or_next_codon(scl_ent.b, scl_ent.j, bb, slot, same_codon_scl)) continue;
-                    if (same_codon_scl && yy != scl_ent.y) continue;
 
-                    // Recover CS geometry from the packed fields (mirroring CS->C logic).
-                    int s_left_start   = scl_ent.cs_single_start;  // sigma(S_left.a, S_left.i)
-                    int c_inner_left   = scl_ent.cs_inner_left;    // sigma(C.a, C.i)
-                    int seg_len_left   = scl_ent.cs_right_len;     // S_left length
+                    // Recover structural geometry from cs_* fields (shared across variants).
+                    int s_left_start   = scl_ent.cs_single_start;
+                    int c_inner_left   = scl_ent.cs_inner_left;
+                    int seg_len_left   = scl_ent.cs_right_len;
                     if (s_left_start < 0 || c_inner_left < 0 || seg_len_left <= 0) continue;
 
-                    // Outer-left nucleotide position is immediately before S_left start.
                     int outer_left_nuc = s_left_start - 1;
                     if (outer_left_nuc < 0) continue;
                     if ((pos - outer_left_nuc) <= (HAIRPIN_GAP + 2)) continue;
@@ -2426,76 +4696,76 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                     int aa_o  = outer_left_nuc / 3, ii_o  = outer_left_nuc % 3;
                     int paa_o = protein[aa_o];
                     const int ncod_o = n_codon[paa_o];
+                    const int seam_pos_sl = c_inner_left - 1;
 
-                    // Look up the inner C entry to get inner pair nucleotides.
-                    int inner_key = scl_ent.cs_inner_key;
-                    int seam_pos_sl = c_inner_left - 1;  // S_left ends here
-                    if (inner_key < 0 || tab_c[pos_prev].count(inner_key) == 0) continue;
-                    const BeamEntry& inner_ent = tab_c[pos_prev].at(inner_key);
-
-                    // Look up the S_left entry to get the last nucleotide (for p-1 mismatch).
-                    int s_left_key = scl_ent.cs_right_s_key;
-                    if (s_left_key < 0 || seam_pos_sl < 0 || seam_pos_sl >= nuc_len) continue;
-                    if (seg_len_left >= (int)tab_s[seam_pos_sl].size()) continue;
-                    if (tab_s[seam_pos_sl][seg_len_left].count(s_left_key) == 0) continue;
-                    const BeamEntry& s_left_ent = tab_s[seam_pos_sl][seg_len_left].at(s_left_key);
-
-                    // Right outer nuc
+                    // Right outer nuc (used when !same_codon_scl)
                     int nuc_ro = nucleotides[pbb][yy][slot];
 
-                    // Recover the per-variant codon indices used when this SCLeft was built.
-                    // bt_info = {c_key, s_key, cvar.x, cvar.y, svar.x, svar.y}
-                    const auto& scl_bt = scl_ent.bt_info;
-                    if (scl_bt.size() < 6) continue;
-                    const int inner_x_v = scl_bt[2];  // C variant x used to build SCLeft
-                    const int inner_y_v = scl_bt[3];  // C variant y used to build SCLeft
-                    const int sleft_x_v = scl_bt[4];  // S variant x used to build SCLeft
-                    const int sleft_y_v = scl_bt[5];  // S variant y used to build SCLeft
+                    // Iterate variants of the merged SCLeft entry. With dual keying, each
+                    // variant carries its own (svar.x = entry.x, cvar.y = entry.y) and
+                    // bt_info = {c_key, s_key, cvar.x, svar.y} (the internal codons).
+                    for (const auto& scl_var : scl_ent.variants) {
+                        // Same-codon seam at the outer-right side: the variant's y (=cvar.y)
+                        // must match yy at pos+1 when they fall in one codon.
+                        if (same_codon_scl && yy != scl_var.y) continue;
+                        const auto& var_bt = scl_var.bt_info;
+                        if (var_bt.size() < 4) continue;
+                        const int c_key_v   = var_bt[0];
+                        const int s_key_v   = var_bt[1];
+                        const int inner_x_v = var_bt[2];      // cvar.x
+                        const int sleft_y_v = var_bt[3];      // svar.y
+                        const int sleft_x_v = scl_var.x;      // svar.x = variant's x
+                        const int inner_y_v = scl_var.y;      // cvar.y = variant's y
 
-                    // Determine effective yy (codon at outer right)
-                    const int yy_eff = (same_codon_scl && inner_ent.b == bb) ? inner_y_v : yy;
-                    const int nuc_ro_eff = same_codon_scl ? nucleotides[pbb][yy_eff][slot] : nuc_ro;
+                        // Look up the inner C and S_left entries (still needed for protein/codon
+                        // indices used to compute outer-pair nucleotides).
+                        if (c_key_v < 0 || tab_c[pos_prev].count(c_key_v) == 0) continue;
+                        const BeamEntry& inner_ent = tab_c[pos_prev].at(c_key_v);
+                        if (s_key_v < 0 || seam_pos_sl < 0 || seam_pos_sl >= nuc_len) continue;
+                        if (seg_len_left >= (int)tab_s[seam_pos_sl].size()) continue;
+                        if (tab_s[seam_pos_sl][seg_len_left].count(s_key_v) == 0) continue;
+                        const BeamEntry& s_left_ent = tab_s[seam_pos_sl][seg_len_left].at(s_key_v);
 
-                    // Inner pair nucleotides (use per-variant codon indices)
-                    int nuc_li = nucleotides[protein[inner_ent.a]][inner_x_v][inner_ent.i];
-                    int nuc_ri = nucleotides[protein[inner_ent.b]][inner_y_v][inner_ent.j];
+                        const int yy_eff = (same_codon_scl && inner_ent.b == bb) ? inner_y_v : yy;
+                        const int nuc_ro_eff = same_codon_scl ? nucleotides[pbb][yy_eff][slot] : nuc_ro;
 
-                    for (int xx_o = 0; xx_o < ncod_o; ++xx_o) {
-                        if (aa_o == s_left_ent.a && xx_o != sleft_x_v) continue;
-                        int nuc_lo = nucleotides[paa_o][xx_o][ii_o];
-                        if (BP_pair[nuc_lo + 1][nuc_ro_eff + 1] == 0) continue;
+                        // Inner-pair and S_left mismatch nucs are determined by the variant.
+                        int nuc_li  = nucleotides[protein[inner_ent.a]][inner_x_v][inner_ent.i];
+                        int nuc_ri  = nucleotides[protein[inner_ent.b]][inner_y_v][inner_ent.j];
+                        int nuc_i1  = nucleotides[protein[s_left_ent.a]][sleft_x_v][s_left_ent.i];
+                        int nuc_pm1 = nucleotides[protein[s_left_ent.b]][sleft_y_v][s_left_ent.j];
+                        int nuc_jm1 = nuc_ri;
 
-                        // Mismatch nucleotides for left-bulge (n1=seg_len_left, n2=0):
-                        //   nuc_i1  = first nuc of S_left (= i+1 from outer pair)
-                        //   nuc_jm1 = C_inner right nuc (= j-1 from outer pair, since n2=0)
-                        //   nuc_pm1 = last nuc of S_left (= p-1 from inner pair)
-                        //   nuc_qp1 = not used (bulge_loop called for n2=0)
-                        const int nuc_i1  = nucleotides[protein[s_left_ent.a]][sleft_x_v][s_left_ent.i];
-                        const int nuc_jm1 = nuc_ri;  // C_inner right nuc
-                        const int nuc_pm1 = nucleotides[protein[s_left_ent.b]][sleft_y_v][s_left_ent.j];
+                        for (int xx_o = 0; xx_o < ncod_o; ++xx_o) {
+                            if (aa_o == s_left_ent.a && xx_o != sleft_x_v) continue;
+                            int nuc_lo = nucleotides[paa_o][xx_o][ii_o];
+                            if (BP_pair[nuc_lo + 1][nuc_ro_eff + 1] == 0) continue;
 
-                        double loop_e = score_single_loop_with_mismatch(lambda,
-                                                                        nuc_lo, nuc_ro_eff,
-                                                                        nuc_li, nuc_ri,
-                                                                        seg_len_left, 0,
-                                                                        nuc_i1, nuc_jm1,
-                                                                        nuc_pm1, -1);
-                        if (loop_e >= inf) continue;
+                            double loop_e = score_single_loop_with_mismatch(lambda,
+                                                                            nuc_lo, nuc_ro_eff,
+                                                                            nuc_li, nuc_ri,
+                                                                            seg_len_left, 0,
+                                                                            nuc_i1, nuc_jm1,
+                                                                            nuc_pm1, -1);
+                            if (loop_e >= inf) continue;
 
-                        double mfe_cand = scl_ent.mfe + loop_e;
-                        double cai_cand = scl_ent.cai
-                            + (is_last_nuc(pos) ? codon_cai[pbb][yy_eff] : 0.0)
-                            + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
-                        double sc_cand = combined_score(lambda, mfe_cand, cai_cand);
+                            double mfe_cand = scl_var.mfe + loop_e;
+                            double cai_cand = scl_var.cai
+                                + (is_last_nuc(pos) ? codon_cai[pbb][yy_eff] : 0.0)
+                                + (ii_o == 2 ? codon_cai[paa_o][xx_o] : 0.0);
+                            double sc_cand = combined_score(lambda, mfe_cand, cai_cand);
 
-                        int key_cl = nuc_key_c_nuc(outer_left_nuc, pos, nuc_lo, nuc_ro_eff, nuc_len);
-                        BeamEntry ent_cl(sc_cand, aa_o, bb, ii_o, slot, xx_o, yy_eff,
-                                         (int)DernaManner::MANNER_SCLefttoC, mfe_cand, cai_cand);
-                        ent_cl.cs_pack_outer = (long long)kv.first;  // SC_left key
-                        ent_cl.cs_pack_inner_c = -1LL;
-                        check_c_entry_invariant(lambda, ent_cl, "SCLeft->C", pos);
-                        update_derna(curr_c, key_cl, sc_cand, ent_cl);
-                        cnt_SCLeft_to_C++;
+                            int key_cl = nuc_key_c_nuc(outer_left_nuc, pos, nuc_lo, nuc_ro_eff, nuc_len);
+                            BeamEntry ent_cl(sc_cand, aa_o, bb, ii_o, slot, xx_o, yy_eff,
+                                             (int)DernaManner::MANNER_SCLefttoC, mfe_cand, cai_cand);
+                            // Encode the SCLeft entry key + variant (x, y) used, so traceback
+                            // can recover the correct merged-table variant.
+                            ent_cl.cs_pack_outer = (long long)kv.first;
+                            ent_cl.bt_info = {sleft_x_v, inner_y_v};
+                            check_c_entry_invariant(lambda, ent_cl, "SCLeft->C", pos);
+                            update_derna(curr_c, key_cl, sc_cand, ent_cl);
+                            cnt_SCLeft_to_C++;
+                        }
                     }
                 }
             }
@@ -2543,37 +4813,40 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                     // Iterate c_ent variants for codon compatibility with s_ent (and s_ent variants too).
                     for (const auto& cvar : c_ent.variants) {
                         if ((closed_right % 3) != 2) {
-                            // Need s_ent variant with x == cvar.y
-                            const XYVariant* svar = nullptr;
+                            // FIX (point 3): iterate ALL s_ent variants with sv.x == cvar.y,
+                            // not just the first. Multiple svars matching differ in sv.y
+                            // (which affects nuc_jm1 = right_S's last nuc → different
+                            // downstream closure energies). The previous `break;` after
+                            // first match was a coverage gap that forced Block 1 to
+                            // brute-force enumerate (S_left × C × S_right) directly.
                             for (const auto& sv : s_ent.variants) {
-                                if (sv.x == cvar.y) { svar = &sv; break; }
+                                if (sv.x != cvar.y) continue;
+                                cnt_C_S_to_CS++;
+
+                                double c_mfe_v = cvar.mfe, c_cai_v = cvar.cai;
+                                double s_mfe_v = sv.mfe, s_cai_v = sv.cai;
+                                double mfe_cs = c_mfe_v + s_mfe_v;
+                                double cai_cs = c_cai_v + s_cai_v;
+                                double sc_cs = combined_score(lambda, mfe_cs, cai_cs);
+
+                                int cs_il = sigma(c_ent.a, c_ent.i);
+                                int nuc_inner_L = nucleotides[protein[c_ent.a]][cvar.x][c_ent.i];
+                                int nuc_closed_R = nucleotides[protein[c_ent.b]][cvar.y][c_ent.j];
+                                int nuc_single_start = nucleotides[protein[s_ent.a]][sv.x][s_ent.i];
+                                int nuc_jm1 = nucleotides[protein[s_ent.b]][sv.y][s_ent.j];
+                                int key_cs = cs_get_index(cs_il, nuc_inner_L, nuc_closed_R, nuc_single_start, nuc_jm1, seg_len);
+                                BeamEntry ent_cs(sc_cs, s_ent.a, s_ent.b, s_ent.i, s_ent.j, sv.x, sv.y,
+                                                 (int)DernaManner::MANNER_C_StoCS, mfe_cs, cai_cs);
+                                ent_cs.cs_pack_outer = (long long)key_cs;
+                                ent_cs.cs_inner_key = c_key;
+                                ent_cs.cs_right_s_key = s_key;
+                                ent_cs.cs_right_len = seg_len;
+                                ent_cs.cs_single_start = seg_start;
+                                ent_cs.cs_inner_left = cs_il;
+                                ent_cs.cs_inner_right = sigma(c_ent.b, c_ent.j);
+                                ent_cs.bt_info = {c_key, s_key, cvar.x, cvar.y, sv.x, sv.y};
+                                update_derna(curr_cs, key_cs, sc_cs, ent_cs);
                             }
-                            if (!svar) continue;
-                            cnt_C_S_to_CS++;
-
-                            double c_mfe_v = cvar.mfe, c_cai_v = cvar.cai;
-                            double s_mfe_v = svar->mfe, s_cai_v = svar->cai;
-                            double mfe_cs = c_mfe_v + s_mfe_v;
-                            double cai_cs = c_cai_v + s_cai_v;
-                            double sc_cs = combined_score(lambda, mfe_cs, cai_cs);
-
-                            int cs_il = sigma(c_ent.a, c_ent.i);
-                            int nuc_inner_L = nucleotides[protein[c_ent.a]][cvar.x][c_ent.i];
-                            int nuc_closed_R = nucleotides[protein[c_ent.b]][cvar.y][c_ent.j];
-                            int nuc_single_start = nucleotides[protein[s_ent.a]][svar->x][s_ent.i];
-                            int key_cs = cs_get_index(cs_il, nuc_inner_L, nuc_closed_R, nuc_single_start, seg_len);
-                            BeamEntry ent_cs(sc_cs, s_ent.a, s_ent.b, s_ent.i, s_ent.j, svar->x, svar->y,
-                                             (int)DernaManner::MANNER_C_StoCS, mfe_cs, cai_cs);
-                            ent_cs.cs_pack_outer = (long long)key_cs;
-                            ent_cs.cs_pack_inner_c = -1LL;
-                            ent_cs.cs_inner_key = c_key;
-                            ent_cs.cs_right_s_key = s_key;
-                            ent_cs.cs_right_len = seg_len;
-                            ent_cs.cs_single_start = seg_start;
-                            ent_cs.cs_inner_left = cs_il;
-                            ent_cs.cs_inner_right = sigma(c_ent.b, c_ent.j);
-                            ent_cs.bt_info = {c_key, s_key, cvar.x, cvar.y, svar->x, svar->y};
-                            update_derna(curr_cs, key_cs, sc_cs, ent_cs);
                         } else {
                             // Seam at codon boundary: c and s are in different amino acids; iterate all s_ent variants.
                             for (const auto& svar : s_ent.variants) {
@@ -2585,11 +4858,11 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                 int nuc_inner_L = nucleotides[protein[c_ent.a]][cvar.x][c_ent.i];
                                 int nuc_closed_R = nucleotides[protein[c_ent.b]][cvar.y][c_ent.j];
                                 int nuc_single_start = nucleotides[protein[s_ent.a]][svar.x][s_ent.i];
-                                int key_cs = cs_get_index(cs_il, nuc_inner_L, nuc_closed_R, nuc_single_start, seg_len);
+                                int nuc_jm1 = nucleotides[protein[s_ent.b]][svar.y][s_ent.j];
+                                int key_cs = cs_get_index(cs_il, nuc_inner_L, nuc_closed_R, nuc_single_start, nuc_jm1, seg_len);
                                 BeamEntry ent_cs(sc_cs, s_ent.a, s_ent.b, s_ent.i, s_ent.j, svar.x, svar.y,
                                                  (int)DernaManner::MANNER_C_StoCS, mfe_cs, cai_cs);
                                 ent_cs.cs_pack_outer = (long long)key_cs;
-                                ent_cs.cs_pack_inner_c = -1LL;
                                 ent_cs.cs_inner_key = c_key;
                                 ent_cs.cs_right_s_key = s_key;
                                 ent_cs.cs_right_len = seg_len;
@@ -2604,9 +4877,140 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 }
             }
         }
-        // CS prune: cumulative (bestF[left-1] + local), mirrors LCDSfold BeamPrune(false).
-        prune_cumulative(curr_cs, beamsize, pos, n, DernaTableKind::CS, best_f_prefix, protein);
+        // CS prune: hybrid (top-K raw ∪ top-K cumulative [∪ top-K lookahead if
+        // DERNA_LOOKAHEAD_PRUNE=1]). Pure cumulative can drop CS entries whose
+        // raw score is locally great but whose cs_il is far from the F-prefix's
+        // most-folded prefix — the hybrid keeps both the globally promising
+        // (cumulative) and the locally great (raw) entries. The optional
+        // lookahead metric tightens by adding min_sl_at[cs_il-1].
+        //
+        // Selective Block 1 (Approach c): log dropped CS tuples so Block 1 at
+        // pos+1 only runs for tuples whose CS coverage was lost.
+        static const bool lookahead_prune = []() {
+            const char* e = std::getenv("DERNA_LOOKAHEAD_PRUNE");
+            return e && e[0] == '1';
+        }();
+        // Pass dropped-units pointer only when selective Block 1 is active, to
+        // keep prune_cs_hybrid's behavior bit-identical to the baseline path
+        // when no selective filtering is requested.
+        static const bool sel_blk1_active_test = []() {
+            const char* e = std::getenv("DERNA_SELECTIVE_BLK1");
+            return e && e[0] == '1';
+        }();
+        std::unordered_set<uint64_t>* drop_arg = sel_blk1_active_test
+            ? &tab_cs_dropped_units[pos] : nullptr;
+        // Approach (b): two-tier CS storage. DERNA_CS_PRUNE_MULT=N caps CS at
+        // N*beamsize entries (default behavior at MULT=2 is hybrid prune).
+        // Setting MULT=0 or unset keeps the original 2K cap; MULT=20 ≈ unbounded.
+        static const int cs_prune_mult = []() {
+            const char* e = std::getenv("DERNA_CS_PRUNE_MULT");
+            if (!e) return 0;
+            int v = atoi(e);
+            return v > 0 ? v : 0;
+        }();
+        // DERNA_CS_NO_PRUNE=1 disables CS prune entirely (= MULT=infinity).
+        static const bool cs_no_prune = []() {
+            const char* e = std::getenv("DERNA_CS_NO_PRUNE");
+            return e && e[0] == '1';
+        }();
+        if (cs_no_prune) {
+            // No prune — drop only invalid entries.
+            for (auto it = curr_cs.begin(); it != curr_cs.end();) {
+                if (!std::isfinite(it->second.score) ||
+                    !entry_is_position_consistent(it->second, pos, n,
+                                                  DernaTableKind::CS, -1))
+                    it = curr_cs.erase(it);
+                else ++it;
+            }
+        } else if (cs_prune_mult > 0) {
+            // Two-tier prune: keep top-(MULT*K) raw, drop rest. Coarser than
+            // hybrid but cheaper than unlimited.
+            const int eff_k = beamsize * cs_prune_mult;
+            for (auto it = curr_cs.begin(); it != curr_cs.end();) {
+                if (!std::isfinite(it->second.score) ||
+                    !entry_is_position_consistent(it->second, pos, n,
+                                                  DernaTableKind::CS, -1))
+                    it = curr_cs.erase(it);
+                else ++it;
+            }
+            if (beamsize > 0 && (int)curr_cs.size() > eff_k) {
+                std::vector<std::pair<double, int>> vals;
+                vals.reserve(curr_cs.size());
+                for (const auto& kv : curr_cs)
+                    vals.push_back({kv.second.score, kv.first});
+                auto nth = vals.begin() + (eff_k - 1);
+                std::nth_element(vals.begin(), nth, vals.end(),
+                                 [](const auto& a, const auto& b) {
+                                     if (a.first != b.first) return a.first < b.first;
+                                     return a.second < b.second;
+                                 });
+                double thr = nth->first;
+                int thr_key = nth->second;
+                for (auto it = curr_cs.begin(); it != curr_cs.end();) {
+                    double sv = it->second.score;
+                    if (sv > thr || (sv == thr && it->first > thr_key)) {
+                        if (drop_arg) {
+                            const BeamEntry& e = it->second;
+                            if (e.cs_inner_key >= 0 && e.cs_right_s_key >= 0 &&
+                                e.cs_right_len > 0 && e.cs_inner_right >= 0) {
+                                drop_arg->insert(pack_cs_blk1_unit(
+                                    e.cs_inner_right, e.cs_right_len,
+                                    e.cs_right_s_key, e.cs_inner_key));
+                            }
+                        }
+                        it = curr_cs.erase(it);
+                    } else ++it;
+                }
+            }
+        } else if (lookahead_prune) {
+            prune_cs_hybrid_lookahead(curr_cs, beamsize, pos, n, best_f_prefix,
+                                      min_sl_at_pos, protein, drop_arg);
+        } else {
+            prune_cs_hybrid(curr_cs, beamsize, pos, n, best_f_prefix, protein, drop_arg);
+        }
+        tab_cs_selective_active[pos] = (beamsize > 0);
         ms_C_S_to_CS += duration<double, milli>(high_resolution_clock::now() - t_c1).count();
+
+        // [DIAGNOSTIC] CS_VAR_PRED_DIAG: compare per-variant bt_info.data[1] (the
+        // s_right_key recorded at C+S→CS construction) against the top-level
+        // cs_right_s_key (the winner's s_right_key). Tests whether a per-variant
+        // s_right pointer would expose distinct s_right_ents inaccessible to the
+        // top-level pointer alone. Default behavior unchanged when env unset.
+        if (std::getenv("CS_VAR_PRED_DIAG")) {
+            static uint64_t total_variants = 0;
+            static uint64_t mismatched_variants = 0;
+            static uint64_t total_entries = 0;
+            static uint64_t cs_entries_with_any_mismatch = 0;
+            uint64_t pos_entries = 0;
+            uint64_t pos_total_variants = 0;
+            uint64_t pos_mismatched = 0;
+            for (const auto& kv : curr_cs) {
+                const BeamEntry& ent = kv.second;
+                ++total_entries;
+                ++pos_entries;
+                bool any_mismatch = false;
+                for (const auto& v : ent.variants) {
+                    ++total_variants;
+                    ++pos_total_variants;
+                    int variant_s_key = (v.bt_info.len > 1) ? v.bt_info.data[1] : -2;
+                    if (variant_s_key != ent.cs_right_s_key) {
+                        ++mismatched_variants;
+                        ++pos_mismatched;
+                        any_mismatch = true;
+                    }
+                }
+                if (any_mismatch) ++cs_entries_with_any_mismatch;
+            }
+            std::cerr << "[CS_VAR_PRED_DIAG] pos=" << pos
+                      << " pos_entries=" << pos_entries
+                      << " pos_variants=" << pos_total_variants
+                      << " pos_mismatched=" << pos_mismatched
+                      << " cum_entries=" << total_entries
+                      << " cum_variants=" << total_variants
+                      << " cum_mismatched=" << mismatched_variants
+                      << " cum_mismatch_pct=" << (total_variants ? 100.0 * mismatched_variants / total_variants : 0.0)
+                      << " cum_entries_with_any_mismatch=" << cs_entries_with_any_mismatch << "\n";
+        }
 
         auto t_c2 = high_resolution_clock::now();
         // ---------- C -> C (stacking) ----------
@@ -2830,6 +5234,22 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
         }
         // Third C prune: cumulative (bestF[left-1] + local), LCDSfold prune 2 (line 1434).
         prune_cumulative(curr_c, beamsize, pos, n, DernaTableKind::C, best_f_prefix, protein);
+        // VARDIST diagnostic: per-pos C-table variants[] distribution.
+        vardist_measure_map(pos, "C", curr_c, protein);
+
+        // ---- Build codon-pair aggregation for C table at this pos (post-prune) ----
+        // The Block 1 supplemental pass below is gated off (`if (false && ...)`), so
+        // this prune is the FINAL C prune for this position. If that ever changes,
+        // move this build call after the fourth prune at line ~4292.
+        {
+            CodonAggTables::PerPosDiag* c_diag_ptr = agg_diag_on ? &agg_tables.diag[pos] : nullptr;
+            build_c_codon_agg(curr_c, agg_tables.c_agg[pos], c_diag_ptr);
+        }
+
+        // Per-pos diagnostic dump: write S+C row to output/agg_diagnostics.log.
+        if (agg_diag_on) {
+            agg_diag_write_pos(pos, agg_tables.diag[pos]);
+        }
 
         // ---------- Block 1 (LCDSfold) supplemental pass: runs AFTER third prune ----------
         // By running here, Block 1 supplements the top-k C entries with combinations missed
@@ -2926,6 +5346,9 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
         // ---------- Build SC_left = S_left + C composites (for left-bulge closing at pos+1) ----------
         // Mirror of C+S->CS: for each C in curr_c (pruned), find S_left segments ending at
         // sigma(C.a, C.i) - 1. The SC_left composite is used at pos+1 to close a left-bulge.
+        // NOT REDUNDANT with MANNER_S_CtoC at line 2815+: that path uses only the BEST
+        // (top-level) S variant in the !same_codon case, while SCLeft enumerates all S
+        // variants. Verified empirically: stubbing SCLeft drops P01707 to gap=49.9.
         if (pos + 1 < nuc_len) {
             for (auto& ckv : curr_c) {
                 const int c_key = ckv.first;
@@ -2954,15 +5377,25 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                         if (outer_left_nuc < 0) continue;
 
                         // Iterate both C and S variants; seam (s.y == c.x) is per-variant.
+                        // Dual-key merge: structural+nucleotide key collapses (cvar, svar) tuples
+                        // that produce identical closure-relevant nucleotides; per (key, x=svar.x,
+                        // y=cvar.y) the best score wins. bt_info holds the *internal* codons
+                        // (cvar.x, svar.y) needed for traceback recovery — the boundary codons
+                        // (svar.x, cvar.y) are already in (entry.x, entry.y).
                         for (const auto& cvar : c_ent.variants) {
+                            const int nuc_li_v = nucleotides[protein[c_ent.a]][cvar.x][c_ent.i];
+                            const int nuc_ri_v = nucleotides[protein[c_ent.b]][cvar.y][c_ent.j];
                             for (const auto& svar : s_ent.variants) {
                                 if (same_codon_sl && svar.y != cvar.x) continue;
+                                const int nuc_i1_v  = nucleotides[protein[s_ent.a]][svar.x][s_ent.i];
+                                const int nuc_pm1_v = nucleotides[protein[s_ent.b]][svar.y][s_ent.j];
+
                                 double mfe_scl = cvar.mfe + svar.mfe;
                                 double cai_scl = cvar.cai + svar.cai;
                                 double sc_scl  = combined_score(lambda, mfe_scl, cai_scl);
 
-                                int key_scl = -(int)curr_sc_left.size() - 1;
-                                while (curr_sc_left.count(key_scl) != 0) --key_scl;
+                                int key_scl = sc_left_key_encode(s_left_start, seg_len,
+                                                                 nuc_li_v, nuc_ri_v, nuc_i1_v, nuc_pm1_v);
 
                                 BeamEntry ent_scl(sc_scl, s_ent.a, c_ent.b, s_ent.i, c_ent.j,
                                                   svar.x, cvar.y, (int)DernaManner::MANNER_C_StoSCLeft,
@@ -2972,15 +5405,20 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                 ent_scl.cs_right_len    = seg_len;
                                 ent_scl.cs_single_start = s_left_start;
                                 ent_scl.cs_inner_left   = c_inner_left;
-                                ent_scl.bt_info = {c_key, s_key, cvar.x, cvar.y, svar.x, svar.y};
-                                curr_sc_left[key_scl] = ent_scl;
+                                ent_scl.bt_info = {c_key, s_key, cvar.x, svar.y};
+                                update_derna(curr_sc_left, key_scl, sc_scl, ent_scl);
                                 cnt_SC_left_build++;
                             }
                         }
                     }
                 }
             }
-            prune_beam_derna_checked(curr_sc_left, beamsize, pos, n, DernaTableKind::C);
+            // With dual-keyed SCLeft, entries merge by structural+nucleotide signature
+            // and per (key, x, y) the best (mfe, cai) is kept. |SCLeft| is bounded by
+            // the number of distinct (s_left_start, seg_len_left, 4 nucs) tuples present
+            // at this pos, well under beamsize in practice. We still apply a cumulative
+            // prune for safety on extreme cases.
+            prune_sc_left_hybrid(curr_sc_left, beamsize, best_f_prefix);
         }
 
         // ---------- C -> M1 and M1 + C -> M2 ----------
@@ -3002,7 +5440,7 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 cnt_C_to_M1++;
                 double sc_ml1 = combined_score(lambda, cvar.mfe + pen_ml, cvar.cai);
                 BeamEntry ent_ml1(sc_ml1, c_ent.a, c_ent.b, c_ent.i, c_ent.j, cvar.x, cvar.y, (int)DernaManner::MANNER_CtoM1,
-                    cvar.mfe + pen_ml, cvar.cai, {key_c}, pos);
+                    cvar.mfe + pen_ml, cvar.cai, {key_c, cvar.x, cvar.y}, pos);
                 ent_ml1.cs_inner_left = sigma(c_ent.a, c_ent.i);
                 check_m1_entry_invariant(lambda, ent_ml1, "C->M1");
                 update_derna(curr_m1, codon_beam_key(sigma(c_ent.a, c_ent.i), nuc_left, nuc_right), sc_ml1, ent_ml1);
@@ -3010,7 +5448,10 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                 if (seam_pos >= HAIRPIN_GAP) {
                     for (auto& m1kv : tab_m1[seam_pos]) {
                         BeamEntry& m1_ent = m1kv.second;
-                        if (m1_ent.bt_info.size() < 2) continue;
+                        // Filter removed (was: m1_ent.bt_info.size() < 2 continue) to allow
+                        // CtoM1-derived M1 entries into M1+C→M2. This is required for the
+                        // LCDS-optimal multi-loop assembly on O14880/Q14442/Q15669/P01707 etc.
+                        // bt_info enrichment + per-variant manner dispatch (below) handle traceback.
                         if (!std::isfinite(m1_ent.cai) || !std::isfinite(m1_ent.mfe) || cai_looks_garbage(m1_ent.cai)) continue;
                         if (sigma(m1_ent.b, m1_ent.j) != seam_pos) continue;
                         if (m1_ent.b != req_aa || m1_ent.j != req_ii) continue;
@@ -3019,7 +5460,7 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                             if (!std::isfinite(m1var.cai) || !std::isfinite(m1var.mfe) || cai_looks_garbage(m1var.cai)) continue;
                             if (c_ent.i > 0 && (m1_ent.b != c_ent.a || m1var.y != cvar.x)) continue;
                             cnt_M1_C_to_M2++;
-                            double pen_ml2 = (double)v_score_M1_pb(nuc_left, nuc_right);
+                            double pen_ml2 = pen_ml;  // invariant in m1var loop
                             double mfe_ml2 = m1var.mfe + cvar.mfe + pen_ml2;
                             int chain_start_cs = (m1_ent.cs_inner_left >= 0)
                                                   ? m1_ent.cs_inner_left
@@ -3125,7 +5566,9 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
                                 BeamEntry ent_comb(sc_comb, s_ent.a, m2_ent.b, s_ent.i, m2_ent.j, s_var.x, m2var.y, (int)DernaManner::MANNER_S_M2toMulti,
                                     mfe_comb, cai_comb);
 
-                                ent_comb.bt_info = {skv.first, m2_key, s_var.y};
+                                // bt[0]=s_key, bt[1]=m2_key, bt[2]=s_var.y,
+                                // bt[3]=seg_len, bt[4]=seam_pos
+                                ent_comb.bt_info = {skv.first, m2_key, s_var.y, seg_len, seam_pos};
                                 ent_comb.last_closed_nuc = last_closed;
                                 ent_comb.cs_inner_left = m2_ent.cs_inner_left;
                                 update_derna(curr_multi, key_comb, sc_comb, ent_comb);
@@ -3228,6 +5671,62 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
     if (s_prune_log.is_open()) {
         s_prune_log.close();
     }
+    if (s_dualbeam_csv.is_open()) {
+        s_dualbeam_csv.close();
+    }
+    // VARDIST: aggregate per-thread linear-find counters and emit summary.
+    if (vardist_diag_enabled()) {
+        VarDistDiag totals;
+        #pragma omp parallel
+        {
+            std::lock_guard<std::mutex> lk(g_vardist_diag_mu);
+            totals.fast_path_calls   += g_vardist_diag.fast_path_calls;
+            totals.linear_find_calls += g_vardist_diag.linear_find_calls;
+            g_vardist_diag = VarDistDiag{};
+        }
+        const uint64_t total = totals.fast_path_calls + totals.linear_find_calls;
+        const double pct_linear = (total > 0)
+            ? (100.0 * (double)totals.linear_find_calls / (double)total) : 0.0;
+        cerr << "[VARDIST_DIAG] update_derna_existing fast_path=" << totals.fast_path_calls
+             << " linear_find=" << totals.linear_find_calls
+             << " total=" << total
+             << " linear_find_pct=" << pct_linear << "%" << endl;
+        if (s_vardist_tsv.is_open()) s_vardist_tsv.close();
+    }
+    // BLK1_AGG_DIAG: gather per-thread diagnostic counters and emit summary.
+    if (blk1_agg_diag_enabled()) {
+        // Collect each OpenMP thread's thread-local g_blk1_agg_diag into a shared vector.
+        Blk1AggDiag totals;
+        #pragma omp parallel
+        {
+            std::lock_guard<std::mutex> lk(g_blk1_agg_diag_mu);
+            totals.seed_calls             += g_blk1_agg_diag.seed_calls;
+            totals.new_variant_calls      += g_blk1_agg_diag.new_variant_calls;
+            totals.existing_variant_calls += g_blk1_agg_diag.existing_variant_calls;
+            totals.total_update_ns        += g_blk1_agg_diag.total_update_ns;
+            if (g_blk1_agg_diag.per_pos_max_redundancy > totals.per_pos_max_redundancy)
+                totals.per_pos_max_redundancy = g_blk1_agg_diag.per_pos_max_redundancy;
+            // Reset thread-local for any subsequent runs.
+            g_blk1_agg_diag = Blk1AggDiag{};
+        }
+        const uint64_t total_calls    = totals.seed_calls + totals.new_variant_calls + totals.existing_variant_calls;
+        const uint64_t distinct_slots = totals.seed_calls + totals.new_variant_calls;
+        const double avg_redundancy = (distinct_slots > 0)
+            ? (double)total_calls / (double)distinct_slots : 0.0;
+        const double ns_per_call = (total_calls > 0)
+            ? (double)totals.total_update_ns / (double)total_calls : 0.0;
+        // Wall-clock total update time across all threads.
+        cerr << "[BLK1_AGG_DIAG] total_calls=" << total_calls
+             << " seed=" << totals.seed_calls
+             << " new_variant=" << totals.new_variant_calls
+             << " existing_variant=" << totals.existing_variant_calls
+             << " distinct_slots=" << distinct_slots
+             << " avg_redundancy=" << avg_redundancy
+             << " max_redundancy=" << totals.per_pos_max_redundancy
+             << " sum_thread_ns=" << totals.total_update_ns
+             << " ns_per_call=" << ns_per_call
+             << endl;
+    }
     // Write transition case counts to file for runtime profiling.
     {
         ofstream count_log("position_beam_transition_counts.txt", ios::out);
@@ -3262,6 +5761,16 @@ void fill_position_beam_tables(int n, vector<int>& protein, double lambda,
          << " N_S=" << ms_N_S << " C=" << ms_C << " Multi=" << ms_Multi << " F=" << ms_F << endl;
     cerr << "[PositionBeamDP profile] C breakdown: CS_to_C=" << ms_CS_to_C << " C_S_to_CS=" << ms_C_S_to_CS
          << " C_to_C=" << ms_C_to_C << " S_C_to_C=" << ms_S_C_to_C << " ms" << endl;
+    if (std::getenv("DERNA_BLK1_DEBUG")) {
+        cerr << "[PositionBeamDP blk1] kept=" << blk1_c_kv_kept_dbg
+             << " filtered=" << blk1_c_kv_filtered_dbg
+             << " (filtered fraction = "
+             << (blk1_c_kv_kept_dbg + blk1_c_kv_filtered_dbg ?
+                 100.0 * blk1_c_kv_filtered_dbg / (blk1_c_kv_kept_dbg + blk1_c_kv_filtered_dbg) : 0.0)
+             << "%)" << endl;
+    }
+    // Close codon-agg diagnostics log if open.
+    agg_diag_close();
 }
 
 // -----------------------------------------------------------------------------
@@ -3318,6 +5827,28 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
     int max_steps = nuc_len * 20;
     int steps = 0;
     int skip_key_not_found = 0;
+
+    // Collected chain states for 2-pass bug_check. Populated during the main
+    // traceback loop; recomputed at end using fully-resolved nucle_seq.
+    struct RecheckStep {
+        int step_idx;
+        int manner_val;
+        int pos;
+        double e_mfe;
+        // Parent C state
+        double pc_mfe;
+        int inner_a, inner_b;
+        int inner_i, inner_j;
+        int inner_x, inner_y;
+        // Outer pair and loop geometry
+        int outer_a, outer_b;
+        int outer_i, outer_j;
+        int outer_x, outer_y;
+        int seg_len_left;
+        int seg_len_right;
+    };
+    std::vector<RecheckStep> recheck;
+
     while (!stack.empty() && steps++ < max_steps) {
         Item it = stack.back();
         stack.pop_back();
@@ -3413,6 +5944,29 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
         int a = e.a, b = e.b, i = e.i, j = e.j;
         if (a < 0 || a >= n || b < 0 || b >= n) continue;
 
+        // Optional step-by-step trace: emit (step, push_manner, created_manner,
+        // pos, a, b, i, j, state.mfe, state.cai) so we can see the real chain
+        // of states producing the final DP score.  Enable with
+        // environment variable DERNA_TB_TRACE=1.  Note: `manner` is how this
+        // state was pushed onto the traceback stack (always CtoC for C
+        // descendents), while `e.backtrace_type` is the ACTUAL manner that
+        // created this state — the one we care about for audit.
+        {
+            static const bool tb_trace_enabled = (std::getenv("DERNA_TB_TRACE") != nullptr);
+            if (tb_trace_enabled) {
+                std::cerr << "[tb_trace] step=" << steps
+                          << " pos=" << pos
+                          << " push_m=" << manner_name(manner)
+                          << " created_m=" << manner_name(e.backtrace_type)
+                          << " a=" << a << " b=" << b
+                          << " i=" << i << " j=" << j
+                          << " x=" << e.x << " y=" << e.y
+                          << " e.mfe=" << e.mfe << " e.cai=" << e.cai
+                          << " e.score=" << e.score
+                          << std::endl;
+            }
+        }
+
         // Merged-state traceback: resolve (x, y, bt_info, backtrace_type) from the variant
         // that matches the expected codon pair from the caller (want_x / want_y).
         // Falls back to the top-level best variant if no match is found.
@@ -3427,6 +5981,8 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
         int var_cs_single_start = e.cs_single_start;
         int var_cs_inner_left = e.cs_inner_left;
         int var_cs_inner_right = e.cs_inner_right;
+        double var_mfe = e.mfe;  // trace-only: follow variant's mfe (not top-level) for bug_check2
+        bool variant_matched = (it.want_x < 0 && it.want_y < 0);
         if (it.want_x >= 0 || it.want_y >= 0) {
             for (const auto& v : e.variants) {
                 if ((it.want_x < 0 || v.x == it.want_x) &&
@@ -3439,13 +5995,194 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
                     var_cs_single_start = v.cs_single_start;
                     var_cs_inner_left   = v.cs_inner_left;
                     var_cs_inner_right  = v.cs_inner_right;
+                    var_mfe             = v.mfe;
+                    variant_matched = true;
                     break;
                 }
+            }
+            if (!variant_matched) {
+                // Caller demanded a specific (x,y) variant that was evicted from
+                // this state. Falling through to the top-level best variant would
+                // overwrite codon_selection with the wrong codon and corrupt the
+                // reconstructed structure. Skip this branch instead — better an
+                // incomplete traceback than non-WC base pairs.
+                skip_key_not_found++;
+                continue;
             }
         }
         const BtInfo& bt = *bt_ptr;
 
+        // === DERNA_TB_TRACE 2-pass bug_check (pass 1: collect) ===
+        // Save chain states on C_StoC / S_CtoC / S_C_StoC so we can re-check
+        // with fully-resolved nucle_seq after the traceback finishes.
+        //   C_StoC  (right bulge):       bt[0]=c_key, bt[1]=s_right_key
+        //   S_CtoC  (left bulge):        bt[0]=s_key, bt[1]=c_key
+        //   S_C_StoC (internal loop):    bt[0]=s_left_key, bt[1]=c_key, bt[2]=s_right_key
+        {
+            static const bool tb_trace_enabled = (std::getenv("DERNA_TB_TRACE") != nullptr);
+            if (tb_trace_enabled) {
+                int ct = e.backtrace_type;
+                bool is_rb = (ct == (int)DernaManner::MANNER_C_StoC);
+                bool is_lb = (ct == (int)DernaManner::MANNER_S_CtoC);
+                bool is_il = (ct == (int)DernaManner::MANNER_S_C_StoC);
+                bool is_hp = (ct == (int)DernaManner::MANNER_NtoC);
+                bool is_stk = (ct == (int)DernaManner::MANNER_CtoC);
+                bool is_ilcs = (ct == (int)DernaManner::MANNER_S_CStoC);
+                if (is_ilcs) {
+                    // S_CStoC: closes an internal loop via CS composite.
+                    // Inner C lives inside the CS at tab_cs[pos-1][cs_pack_outer].
+                    // Walk through to get inner C's mfe. bt_info = {s_left_key, 0, slv.x, slv.y}.
+                    int cs_pos = pos - 1;
+                    long long cs_key = var_cs_pack_outer;
+                    if (cs_pos >= 0 && (size_t)cs_pos < tab_cs.size()
+                            && cs_key >= 0
+                            && tab_cs[cs_pos].count((int)cs_key)) {
+                        const BeamEntry& cs = tab_cs[cs_pos].at((int)cs_key);
+                        // CS composite contains inner_C at tab_c[cs.cs_inner_right]
+                        // Wait: in C_StoCS, cs_inner_right = sigma(c_ent.b, c_ent.j),
+                        // i.e., where the inner C's right boundary lives.
+                        int inner_c_pos = cs.cs_inner_right;
+                        int inner_c_key = cs.cs_inner_key;
+                        int slen_right = cs.cs_right_len;
+                        int slen_left  = var_cs_right_len;  // for S_CStoC, cs_right_len of the outer state stores left seg
+                        if (inner_c_pos >= 0 && (size_t)inner_c_pos < tab_c.size()
+                                && inner_c_key >= 0
+                                && tab_c[inner_c_pos].count(inner_c_key)) {
+                            const BeamEntry& pc = tab_c[inner_c_pos].at(inner_c_key);
+                            RecheckStep rs;
+                            rs.step_idx = steps;
+                            rs.manner_val = ct;
+                            rs.pos = pos;
+                            rs.e_mfe = var_mfe;
+                            rs.pc_mfe = pc.mfe;
+                            rs.inner_a = pc.a; rs.inner_b = pc.b;
+                            rs.inner_i = pc.i; rs.inner_j = pc.j;
+                            rs.inner_x = pc.x;  rs.inner_y = pc.y;
+                            rs.outer_a = a; rs.outer_b = b;
+                            rs.outer_i = i; rs.outer_j = j;
+                            rs.outer_x = x; rs.outer_y = y;
+                            rs.seg_len_left = slen_left;
+                            rs.seg_len_right = slen_right;
+                            recheck.push_back(rs);
+                        }
+                    }
+                }
+                else if (is_stk) {
+                    // Stacking: child.mfe = parent.mfe + stackE. Need parent C.
+                    // bt_info = {c_key, inner_x, inner_y}; parent C at tab_c[pos-1].
+                    int c_close = pos - 1;
+                    if (c_close >= 0 && (size_t)c_close < tab_c.size()
+                            && (int)bt.size() >= 1
+                            && tab_c[c_close].count(bt[0])) {
+                        const BeamEntry& pc = tab_c[c_close].at(bt[0]);
+                        int want_cx = (int)bt.size() >= 2 ? bt[1] : -1;
+                        int want_cy = (int)bt.size() >= 3 ? bt[2] : -1;
+                        double pc_mfe = pc.mfe;
+                        for (const auto& v : pc.variants) {
+                            if ((want_cx < 0 || v.x == want_cx) &&
+                                (want_cy < 0 || v.y == want_cy)) { pc_mfe = v.mfe; break; }
+                        }
+                        int cvx = (want_cx >= 0 ? want_cx : pc.x);
+                        int cvy = (want_cy >= 0 ? want_cy : pc.y);
+                        RecheckStep rs;
+                        rs.step_idx = steps;
+                        rs.manner_val = ct;
+                        rs.pos = pos;
+                        rs.e_mfe = var_mfe;
+                        rs.pc_mfe = pc_mfe;
+                        rs.inner_a = pc.a; rs.inner_b = pc.b;
+                        rs.inner_i = pc.i; rs.inner_j = pc.j;
+                        rs.inner_x = cvx;  rs.inner_y = cvy;
+                        rs.outer_a = a; rs.outer_b = b;
+                        rs.outer_i = i; rs.outer_j = j;
+                        rs.outer_x = x; rs.outer_y = y;
+                        rs.seg_len_left = 0;
+                        rs.seg_len_right = 0;
+                        recheck.push_back(rs);
+                    }
+                }
+                else if (is_hp) {
+                    // Hairpin close: the child's mfe should equal Zuker::hairpin_loop(...)
+                    // (or the special tri/tetra/hexaloop energy if applicable).
+                    // Save for pass-2 recomputation with full nucle_seq.
+                    RecheckStep rs;
+                    rs.step_idx = steps;
+                    rs.manner_val = ct;
+                    rs.pos = pos;
+                    rs.e_mfe = var_mfe;
+                    rs.pc_mfe = 0;  // no parent C for hairpin
+                    rs.inner_a = -1; rs.inner_b = -1;
+                    rs.inner_i = -1; rs.inner_j = -1;
+                    rs.inner_x = -1; rs.inner_y = -1;
+                    rs.outer_a = a; rs.outer_b = b;
+                    rs.outer_i = i; rs.outer_j = j;
+                    rs.outer_x = x; rs.outer_y = y;
+                    rs.seg_len_left = 0; rs.seg_len_right = 0;
+                    recheck.push_back(rs);
+                }
+                else if (is_rb || is_lb || is_il) {
+                    int c_slot;
+                    int seg_len_left, seg_len_right;
+                    // The inner C's position in tab_c differs per manner:
+                    //   C_StoC (right bulge)    → inner right = cs_inner_left
+                    //   S_C_StoC (internal loop) → inner right = cs_inner_left
+                    //   S_CtoC (left bulge)      → inner right = pos - 1 (adjacent to outer right)
+                    int closed_right;
+                    if (is_rb) { c_slot = 0; seg_len_left = 0;                   seg_len_right = var_cs_right_len; closed_right = var_cs_inner_left; }
+                    else if (is_lb) { c_slot = 1; seg_len_left = var_cs_right_len; seg_len_right = 0;                   closed_right = pos - 1; }
+                    else             { c_slot = 1; seg_len_left = var_cs_inner_right; seg_len_right = var_cs_right_len; closed_right = var_cs_inner_left; }
+                    if (closed_right >= 0 && (size_t)closed_right < tab_c.size()
+                            && (int)bt.size() > c_slot
+                            && tab_c[closed_right].count(bt[c_slot])) {
+                        const BeamEntry& pc = tab_c[closed_right].at(bt[c_slot]);
+                        int want_cx = -1, want_cy = -1;
+                        if (is_rb && (int)bt.size() >= 4) { want_cx = bt[2]; want_cy = bt[3]; }
+                        if (is_lb && (int)bt.size() >= 4) { want_cx = bt[2]; want_cy = bt[3]; }
+                        if (is_il && (int)bt.size() >= 7) { want_cx = bt[5]; want_cy = bt[6]; }
+                        double pc_mfe = pc.mfe;
+                        for (const auto& v : pc.variants) {
+                            if ((want_cx < 0 || v.x == want_cx) &&
+                                (want_cy < 0 || v.y == want_cy)) { pc_mfe = v.mfe; break; }
+                        }
+                        int cvx = (want_cx >= 0 ? want_cx : pc.x);
+                        int cvy = (want_cy >= 0 ? want_cy : pc.y);
+                        RecheckStep rs;
+                        rs.step_idx = steps;
+                        rs.manner_val = ct;
+                        rs.pos = pos;
+                        rs.e_mfe = var_mfe;
+                        rs.pc_mfe = pc_mfe;
+                        rs.inner_a = pc.a; rs.inner_b = pc.b;
+                        rs.inner_i = pc.i; rs.inner_j = pc.j;
+                        rs.inner_x = cvx;  rs.inner_y = cvy;
+                        rs.outer_a = a; rs.outer_b = b;
+                        rs.outer_i = i; rs.outer_j = j;
+                        rs.outer_x = x; rs.outer_y = y;
+                        rs.seg_len_left = seg_len_left;
+                        rs.seg_len_right = seg_len_right;
+                        recheck.push_back(rs);
+                    }
+                }
+            }
+        }
+
         int li = sigma(a, i), rj = sigma(b, j);
+        // Codon-consistency check: detect overwrites of codon_selection[aa].
+        {
+            static const bool tb_trace_enabled = (std::getenv("DERNA_TB_TRACE") != nullptr);
+            if (tb_trace_enabled) {
+                if (codon_selection[a] != -1 && codon_selection[a] != x) {
+                    std::cerr << "[codon_conflict] step=" << steps
+                              << " manner=" << manner_name(e.backtrace_type)
+                              << " aa_a=" << a << " prior=" << codon_selection[a] << " new=" << x << "\n";
+                }
+                if (a != b && codon_selection[b] != -1 && codon_selection[b] != y) {
+                    std::cerr << "[codon_conflict] step=" << steps
+                              << " manner=" << manner_name(e.backtrace_type)
+                              << " aa_b=" << b << " prior=" << codon_selection[b] << " new=" << y << "\n";
+                }
+            }
+        }
         codon_selection[a] = x;
         codon_selection[b] = y;
         if (li >= 0 && li < nuc_len && protein[a] >= 0 && protein[a] < 20 && x >= 0 && x < n_codon[protein[a]])
@@ -3460,11 +6197,27 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
                           manner == (int)DernaManner::MANNER_S_CStoC || manner == (int)DernaManner::MANNER_MultitoC ||
                           manner == (int)DernaManner::MANNER_C_StoC || manner == (int)DernaManner::MANNER_S_C_StoC ||
                           manner == (int)DernaManner::MANNER_SpecialHP);
-        if (is_closed && li >= 0 && li < nuc_len && rj >= 0 && rj < nuc_len && li < rj
-            && !paired[li] && !paired[rj]) {
-            bp_bond.push_back({li, rj});
-            paired[li] = true;
-            paired[rj] = true;
+        if (is_closed && li >= 0 && li < nuc_len && rj >= 0 && rj < nuc_len && li < rj) {
+            if (!paired[li] && !paired[rj]) {
+                bp_bond.push_back({li, rj});
+                paired[li] = true;
+                paired[rj] = true;
+            } else {
+                // Pair-drop: DP accumulated energy for this pair but the position
+                // is already occupied by an earlier-traced pair. This is a prime
+                // suspect for the DP-vs-evaluate phantom-energy discrepancy.
+                static const bool tb_trace_enabled = (std::getenv("DERNA_TB_TRACE") != nullptr);
+                if (tb_trace_enabled) {
+                    std::cerr << "[pair_dropped] step=" << steps
+                              << " manner=" << manner_name(manner)
+                              << " created_m=" << manner_name(e.backtrace_type)
+                              << " li=" << li << " rj=" << rj
+                              << " paired[li]=" << (paired[li] ? "Y" : "N")
+                              << " paired[rj]=" << (paired[rj] ? "Y" : "N")
+                              << " e.mfe=" << e.mfe
+                              << "\n";
+                }
+            }
         }
 
         // Helper: push an item; for same-table extension transitions propagate (x,y) as hint
@@ -3567,27 +6320,37 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
         }
 
         else if (mt == (int)DernaManner::MANNER_SCLefttoC) {
-            // SCLefttoC: outer pair closes at (outer_left, pos).
-            // cs_pack_outer stores the SCLeft key in tab_sc_left[pos-1].
+            // SCLefttoC: outer pair closes at (outer_left, pos). With dual-keyed SCLeft,
+            // the C entry's bt_info stores the SCLeft variant identifier {sleft_x_v, inner_y_v}
+            // (so traceback can find the correct merged-table variant).
             int scl_pos = pos - 1;
             int scl_key = (int)var_cs_pack_outer;
             if (scl_pos >= 0 && (size_t)scl_pos < tab_sc_left.size() &&
                 tab_sc_left[scl_pos].count(scl_key)) {
                 const BeamEntry& scl = tab_sc_left[scl_pos].at(scl_key);
-                // SCLeft bt_info = {c_key, s_key, cvar.x, cvar.y, svar.x, svar.y}
-                const BtInfo& scl_bt = scl.bt_info;
-                int cx = (scl_bt.size() >= 4) ? scl_bt[2] : -1;
-                int cy = (scl_bt.size() >= 4) ? scl_bt[3] : -1;
-                int sx = (scl_bt.size() >= 6) ? scl_bt[4] : -1;
-                int sy = (scl_bt.size() >= 6) ? scl_bt[5] : -1;
+                int scl_var_x = (bt.size() >= 1) ? bt[0] : -1;
+                int scl_var_y = (bt.size() >= 2) ? bt[1] : -1;
+                // Resolve specific variant inside the merged SCLeft entry.
+                const XYVariant* sv = nullptr;
+                if (scl_var_x >= 0 && scl_var_x < 6 && scl_var_y >= 0 && scl_var_y < 6) {
+                    int vi = scl.variant_idx[scl_var_x][scl_var_y];
+                    if (vi >= 0 && vi < (int)scl.variants.size()) sv = &scl.variants[vi];
+                }
+                if (!sv && !scl.variants.empty()) sv = &scl.variants.front();  // fallback (shouldn't be needed)
+                // SCLeft variant bt_info = {c_key, s_key, cvar.x, svar.y}
+                const BtInfo& var_bt = sv ? sv->bt_info : scl.bt_info;
+                int c_key_inner = (var_bt.size() >= 1) ? var_bt[0] : scl.cs_inner_key;
+                int s_key       = (var_bt.size() >= 2) ? var_bt[1] : scl.cs_right_s_key;
+                int cx          = (var_bt.size() >= 3) ? var_bt[2] : -1;       // cvar.x (internal)
+                int sy          = (var_bt.size() >= 4) ? var_bt[3] : -1;       // svar.y (internal)
+                int sx          = sv ? sv->x : -1;                              // svar.x = variant's x
+                int cy          = sv ? sv->y : -1;                              // cvar.y = variant's y
                 // Inner C at scl_pos (same position as SCLeft)
-                int c_key_inner = scl.cs_inner_key;
                 if (c_key_inner >= 0 && (size_t)scl_pos < tab_c.size() && tab_c[scl_pos].count(c_key_inner))
                     stack.push_back({scl_pos, c_key_inner, (int)DernaManner::MANNER_CtoC, -1, false, 0LL, -1LL, cx, cy});
                 // S_left at seam_pos = cs_inner_left - 1
                 int seam_pos = scl.cs_inner_left - 1;
                 int seg = scl.cs_right_len;
-                int s_key = scl.cs_right_s_key;
                 if (seam_pos >= 0 && seg > 0 && (size_t)seam_pos < tab_s.size() &&
                     seg < (int)tab_s[seam_pos].size() && tab_s[seam_pos][seg].count(s_key))
                     stack.push_back({seam_pos, s_key, (int)DernaManner::MANNER_S_EtoS, seg, false, 0LL, -1LL, sx, sy});
@@ -3612,19 +6375,31 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
                 stack.push_back({s_seam_pos, bt[0], (int)DernaManner::MANNER_S_EtoS, s_seg_len, false, 0LL, -1LL, sx, sy});
         }
         else if (mt == (int)DernaManner::MANNER_S_CStoC && bt.size() >= 1) {
-            // bt_info = {s_left_key, 0, slv.x, slv.y}
+            // bt_info = {s_left_key, 0, slv.x, slv.y, best_csvar_y, seg_len_left}
             int cs_pos = pos - 1;
+            int cs_want_y = ((int)bt.size() >= 5) ? bt[4] : -1;
             if (cs_pos >= 0 && (size_t)cs_pos < tab_cs.size())
-                stack.push_back({cs_pos, 0, (int)DernaManner::MANNER_C_StoCS, -1, true, var_cs_pack_outer, 0LL, -1, -1});
+                stack.push_back({cs_pos, 0, (int)DernaManner::MANNER_C_StoCS, -1, true, var_cs_pack_outer, 0LL, -1, cs_want_y});
 
             int sl_x = (bt.size() >= 4) ? bt[2] : -1;
             int sl_y = (bt.size() >= 4) ? bt[3] : -1;
-            int s_close = codon_beam_key_left_pos(bt[0]);
-            if (s_close >= 0 && (size_t)s_close < tab_s.size()) {
-                for (int seg = 1; seg < (int)tab_s[s_close].size(); ++seg) {
-                    if (tab_s[s_close][seg].count(bt[0])) {
-                        stack.push_back({s_close, bt[0], (int)DernaManner::MANNER_S_EtoS, seg, false, 0LL, -1LL, sl_x, sl_y});
-                        break;
+            int seg_len_left = (bt.size() >= 6) ? bt[5] : -1;
+            int seam_pos_left = (bt.size() >= 7) ? bt[6] : -1;
+            if (seg_len_left > 0 && seam_pos_left >= 0 && (size_t)seam_pos_left < tab_s.size() &&
+                seg_len_left < (int)tab_s[seam_pos_left].size() &&
+                tab_s[seam_pos_left][seg_len_left].count(bt[0])) {
+                stack.push_back({seam_pos_left, bt[0], (int)DernaManner::MANNER_S_EtoS, seg_len_left, false, 0LL, -1LL, sl_x, sl_y});
+            } else {
+                // Legacy fallback: prior (buggy) scan. Kept for safety so states with
+                // the old 4-slot bt_info don't crash. Should not fire once all states
+                // are filled by the new code.
+                int s_close = codon_beam_key_left_pos(bt[0]);
+                if (s_close >= 0 && (size_t)s_close < tab_s.size()) {
+                    for (int seg = 1; seg < (int)tab_s[s_close].size(); ++seg) {
+                        if (tab_s[s_close][seg].count(bt[0])) {
+                            stack.push_back({s_close, bt[0], (int)DernaManner::MANNER_S_EtoS, seg, false, 0LL, -1LL, sl_x, sl_y});
+                            break;
+                        }
                     }
                 }
             }
@@ -3681,9 +6456,16 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
             }
         }
 
-        else if (mt == (int)DernaManner::MANNER_CtoM1 && bt.size() >= 1)
-            // CtoM1 copies C's (x,y) into M1; propagate current (x,y) to find the exact C variant.
-            push_ext(pos, bt[0], (int)DernaManner::MANNER_CtoC, -1);
+        else if (mt == (int)DernaManner::MANNER_CtoM1 && bt.size() >= 1) {
+            // CtoM1 bt_info enriched to {c_key, c_var.x, c_var.y} so we recover the
+            // exact C variant even when M1's top-level (x,y) was overwritten by a later
+            // M1_EtoM1 update at the same key.
+            int c_want_x = (bt.size() >= 2) ? bt[1] : x;
+            int c_want_y = (bt.size() >= 3) ? bt[2] : y;
+            int c_close = nuc_key_c_to_close(bt[0], nuc_len);
+            if (c_close >= 0 && (size_t)c_close < tab_c.size())
+                stack.push_back({c_close, bt[0], (int)DernaManner::MANNER_CtoC, -1, false, 0LL, -1LL, c_want_x, c_want_y});
+        }
         else if (mt == (int)DernaManner::MANNER_M1_CtoM2 && bt.size() >= 2) {
             int c_left = nuc_key_c_to_left(bt[1], nuc_len);
             int seam_pos_m1 = c_left - 1;
@@ -3713,18 +6495,27 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
         }
         else if (mt == (int)DernaManner::MANNER_S_M2toMulti && bt.size() >= 2) {
             // bt[0] = S key, bt[1] = M2 key at same pos; bt[2] = s_var.y (= m2var.x via seam constraint)
+            // bt[3] = seg_len, bt[4] = seam_pos (direct index into tab_s, avoids ambiguous seg scan)
             // Multi.y = m2var.y, so pass (m2var.x=bt[2], m2var.y=y) to find the exact M2 variant.
             int m2_want_x = (bt.size() >= 3) ? bt[2] : -1;
             stack.push_back({pos, bt[1], (int)DernaManner::MANNER_M1_CtoM2, -1, false, 0LL, -1LL, m2_want_x, y});
 
             int s_inner_y = (bt.size() >= 3) ? bt[2] : -1;  // stored s_var.y for exact inner-S variant lookup
-            // With codon_beam_key, bt[0] encodes left_pos in the high bits; left_pos = key / 16.
-            int s_close = codon_beam_key_left_pos(bt[0]);
-            if (s_close >= 0 && (size_t)s_close < tab_s.size()) {
-                for (int seg = 1; seg < (int)tab_s[s_close].size(); ++seg) {
-                    if (tab_s[s_close][seg].count(bt[0])) {
-                        stack.push_back({s_close, bt[0], (int)DernaManner::MANNER_S_EtoS, seg, false, 0LL, -1LL, x, s_inner_y});
-                        break;
+            int seg_len_s = (bt.size() >= 4) ? bt[3] : -1;
+            int seam_pos_s = (bt.size() >= 5) ? bt[4] : -1;
+            if (seg_len_s > 0 && seam_pos_s >= 0 && (size_t)seam_pos_s < tab_s.size() &&
+                seg_len_s < (int)tab_s[seam_pos_s].size() &&
+                tab_s[seam_pos_s][seg_len_s].count(bt[0])) {
+                stack.push_back({seam_pos_s, bt[0], (int)DernaManner::MANNER_S_EtoS, seg_len_s, false, 0LL, -1LL, x, s_inner_y});
+            } else {
+                // Legacy fallback — only used for chart items produced before this fix, if any.
+                int s_close = codon_beam_key_left_pos(bt[0]);
+                if (s_close >= 0 && (size_t)s_close < tab_s.size()) {
+                    for (int seg = 1; seg < (int)tab_s[s_close].size(); ++seg) {
+                        if (tab_s[s_close][seg].count(bt[0])) {
+                            stack.push_back({s_close, bt[0], (int)DernaManner::MANNER_S_EtoS, seg, false, 0LL, -1LL, x, s_inner_y});
+                            break;
+                        }
                     }
                 }
             }
@@ -3742,6 +6533,83 @@ void traceback_position_beam_tables(const AllTablesDerna& tables, int n, const v
                 nucle_seq[p] = nucleotides[pa][codon_selection[aa]][slot];
         }
     }
+
+    // === DERNA_TB_TRACE 2-pass bug_check (pass 2: recompute with real adjacent nucleotides) ===
+    // nucle_seq is now populated from codon_selection. Re-run score_single_loop_with_mismatch
+    // on each saved bulge/IL close using the *actual* adjacent nucleotides the fill would
+    // have seen, and report mismatches.
+    {
+        static const bool tb_trace_enabled = (std::getenv("DERNA_TB_TRACE") != nullptr);
+        if (tb_trace_enabled && !recheck.empty()) {
+            std::cerr << "\n=== DERNA_TB_TRACE pass-2 bug_check (n=" << recheck.size() << ") ===\n";
+            auto nuc_at = [&](int p) -> int {
+                if (p < 0 || p >= nuc_len) return -1;
+                return nucle_seq[p];
+            };
+            double total_delta = 0.0;
+            int mismatches = 0;
+            for (const auto& rs : recheck) {
+                int outer_left  = sigma(rs.outer_a, rs.outer_i);
+                int outer_right = sigma(rs.outer_b, rs.outer_j);
+                int nuc_outer_L = nuc_at(outer_left);
+                int nuc_outer_R = nuc_at(outer_right);
+                double loop_e = 0.0, expected = 0.0;
+                int inner_left = -1, inner_right = -1;
+                int nuc_inner_L = -1, nuc_inner_R = -1;
+                int nuc_i1 = -1, nuc_jm1 = -1, nuc_pm1 = -1, nuc_qp1 = -1;
+                if (rs.manner_val == (int)DernaManner::MANNER_NtoC) {
+                    // Hairpin: loop_e = Zuker::hairpin_loop(nuc_outer_L, nuc_outer_R, nuc_i1, nuc_jm1, loop_len)
+                    int loop_len = outer_right - outer_left - 1;
+                    nuc_i1  = nuc_at(outer_left + 1);
+                    nuc_jm1 = nuc_at(outer_right - 1);
+                    // Check for special hairpins (triloop/tetraloop/hexaloop)
+                    loop_e = (double)Zuker::hairpin_loop(nuc_outer_L, nuc_outer_R, nuc_i1, nuc_jm1, loop_len);
+                    // Compare to what evaluate_structure_energy would compute:
+                    // it uses hairpinE lookup for len 3/4/6 with actual loop string.
+                    expected = loop_e;
+                } else {
+                    inner_left  = sigma(rs.inner_a, rs.inner_i);
+                    inner_right = sigma(rs.inner_b, rs.inner_j);
+                    nuc_inner_L = nuc_at(inner_left);
+                    nuc_inner_R = nuc_at(inner_right);
+                    nuc_i1  = nuc_at(outer_left + 1);
+                    nuc_jm1 = nuc_at(outer_right - 1);
+                    nuc_pm1 = nuc_at(inner_left - 1);
+                    nuc_qp1 = nuc_at(inner_right + 1);
+                    loop_e = score_single_loop_with_mismatch(
+                        1.0, nuc_outer_L, nuc_outer_R,
+                        nuc_inner_L, nuc_inner_R,
+                        rs.seg_len_left, rs.seg_len_right,
+                        nuc_i1, nuc_jm1, nuc_pm1, nuc_qp1);
+                    expected = rs.pc_mfe + loop_e;
+                }
+                double delta = rs.e_mfe - expected;
+                total_delta += delta;
+                bool mism = (std::abs(delta) > 0.5);
+                if (mism) mismatches++;
+                std::cerr << "[bug_check2] step=" << rs.step_idx
+                          << " manner=" << manner_name(rs.manner_val)
+                          << " pos=" << rs.pos
+                          << " outer=(" << outer_left << "," << outer_right << ")"
+                          << " inner=(" << inner_left << "," << inner_right << ")"
+                          << " seg_L=" << rs.seg_len_left
+                          << " seg_R=" << rs.seg_len_right
+                          << " nucs_outer=(" << nuc_outer_L << "," << nuc_outer_R << ")"
+                          << " nucs_inner=(" << nuc_inner_L << "," << nuc_inner_R << ")"
+                          << " adj=(" << nuc_i1 << "," << nuc_jm1 << "," << nuc_pm1 << "," << nuc_qp1 << ")"
+                          << " parent_C.mfe=" << rs.pc_mfe
+                          << " loop_e=" << loop_e
+                          << " expected=" << expected
+                          << " e.mfe=" << rs.e_mfe
+                          << " delta=" << delta
+                          << (mism ? "  <-- MISMATCH" : "")
+                          << "\n";
+            }
+            std::cerr << "=== bug_check2 summary: total_delta=" << total_delta
+                      << " mismatches=" << mismatches << "/" << recheck.size() << " ===\n";
+        }
+    }
+
     double tb_ms = duration<double, milli>(high_resolution_clock::now() - t_tb_start).count();
     cerr << "[PositionBeamDP profile] traceback_ms=" << tb_ms << endl;
 }

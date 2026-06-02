@@ -4,6 +4,7 @@
 #include "Zuker.h"
 #include "PositionBeamDP.h"
 #include "PositionBasedBeamZuker.h"
+#include "LinearFoldCDS.h"
 #include "default.h"
 #include <string>
 #include <tuple>
@@ -14,6 +15,9 @@
 #include <fstream>
 #include <cstdlib>
 #include <unistd.h>  // For _exit() system call
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace std;
 
@@ -29,6 +33,7 @@ int main(int argc, char *argv[]) {
     double incr = inf, lambda = inf, threshold = 0.0025, threshold2 = 0.00075;
     int g = inf, k = 10;  // k is beam width for PositionBeamDP (model 7)
     [[maybe_unused]] int beam_start_len = 5;  // Length to start beam pruning (default: 5)
+    int num_threads = 0;  // 0 = let OpenMP choose (respects OMP_NUM_THREADS); set via -j
 
     if (argc < 2) {
         help();
@@ -85,6 +90,9 @@ int main(int argc, char *argv[]) {
                     case 'b':
                         beam_start_len = std::stoi(argv[i+1]);
                         break;
+                    case 'j':
+                        num_threads = std::stoi(argv[i+1]);
+                        break;
                     default:
                         help();
                         return(0);
@@ -99,7 +107,34 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+#ifdef _OPENMP
+    if (num_threads > 0) {
+        omp_set_num_threads(num_threads);
+        std::cerr << "[threads] using " << num_threads << " OpenMP threads (-j)" << std::endl;
+    }
+#else
+    if (num_threads > 0) {
+        std::cerr << "[threads] -j " << num_threads
+                  << " requested but derna was built without OpenMP; running single-threaded."
+                  << std::endl;
+    }
+#endif
+
+    // Tie-break fix: at strict lambda=1 the DP objective is 1*MFE + 0*CAI, so
+    // among MFE-optima the codon pair is chosen by arbitrary (insertion-order)
+    // tie-breaks that systematically land on low-frequency synonyms. Nudge
+    // lambda by a tiny epsilon to make CAI the secondary objective while
+    // keeping the MFE optimum exactly (eps * max|CAI sum| << MFE granularity).
+    // Applies uniformly to -m 2 (Zuker) and -m 7 (PositionBeamDP).
+    constexpr double CAI_TIEBREAK_EPS = 1e-6;
+    if (lambda == 1.0) {
+        std::cerr << "[tiebreak] lambda=1.0 -> using " << (1.0 - CAI_TIEBREAK_EPS)
+                  << " internally so MFE ties are broken toward higher CAI." << std::endl;
+        lambda = 1.0 - CAI_TIEBREAK_EPS;
+    }
+
     bool nussinov = false, zuker = false, test = false, position_beam_dp = false, pos_based_beam_zuker = false;
+    bool linear_fold_cds = false;
     bool subopt = false, subopt_all = false;
     switch (model) {
         case 0:
@@ -121,6 +156,12 @@ int main(int argc, char *argv[]) {
             break;
         case 7:
             position_beam_dp = true;
+            break;
+        case 8:
+            // LinearFoldCDS: left-to-right beam DP (Phase 3).
+            // SKELETON ONLY — see scripts/PHASE3_M3_DESIGN.md. Recurrences not
+            // yet implemented; exits after printing a not-implemented notice.
+            linear_fold_cds = true;
             break;
         case -1:
             test = true;
@@ -150,6 +191,19 @@ int main(int argc, char *argv[]) {
         fout << "eval MFE: " << MFE/100 << endl;
         fout << "eval CAI: " << cai << endl;
         fout << "eval standard CAI: " << CAI << endl;
+        return 0;
+    }
+
+    if (linear_fold_cds) {
+        if (input.empty()) throw invalid_argument("Input File Needed");
+        vector<int> protein = read_fasta(input, fout);
+        int b_beam = (k > 0) ? k : 100;
+        derna_lfcds::LinearFoldCDSResult res = derna_lfcds::run_linear_fold_cds(
+            protein, lambda, b_beam, num_threads);
+        fout << "LinearFoldCDS (-m 8) skeleton invoked. See "
+                "scripts/PHASE3_M3_DESIGN.md for status." << endl;
+        fout << "completed: " << (res.completed ? "yes" : "no") << endl;
+        fout << "beam_b: " << b_beam << ", lambda: " << lambda << endl;
         return 0;
     }
 
@@ -455,6 +509,138 @@ int main(int argc, char *argv[]) {
         auto start_pdp = chrono::high_resolution_clock::now();
         fill_position_beam_tables(n, protein, lambda, k, tables);
         auto end_fill = chrono::high_resolution_clock::now();
+
+        // Instrumentation: dump C[left,right] entries for a given (left,right) pair.
+        // Env: DERNA_DUMP_C="left_lo,left_hi,right_lo,right_hi" — dump all C entries
+        // where left_pos in [left_lo,left_hi] AND right_pos in [right_lo,right_hi].
+        if (const char* env_dump = std::getenv("DERNA_DUMP_C")) {
+            int ll, lh, rl, rh;
+            if (sscanf(env_dump, "%d,%d,%d,%d", &ll, &lh, &rl, &rh) == 4) {
+                int nuc_len = 3 * n;
+                static const char to_ch[4] = {'A','C','G','U'};
+                cerr << "[DERNA_DUMP_C] dumping C entries for left in [" << ll << "," << lh
+                     << "] right in [" << rl << "," << rh << "]\n";
+                for (int rp = rl; rp <= rh && rp < nuc_len; ++rp) {
+                    if (rp < 0 || rp >= (int)tables.bestC.size()) continue;
+                    for (auto& kv : tables.bestC[rp]) {
+                        int key = kv.first;
+                        int nuc_ro = key & 3;
+                        int nuc_lo = (key >> 2) & 3;
+                        int right_pos = (key >> 4) % nuc_len;
+                        int left_pos = key / (nuc_len * 16);
+                        if (left_pos < ll || left_pos > lh) continue;
+                        const auto& e = kv.second;
+                        cerr << "  C[" << left_pos << "," << right_pos << "]"
+                             << " (nL=" << to_ch[nuc_lo] << ",nR=" << to_ch[nuc_ro] << ")"
+                             << " score=" << e.score << " mfe=" << e.mfe << " cai=" << e.cai
+                             << " manner=" << e.backtrace_type
+                             << " nVar=" << e.variants.size() << "\n";
+                        for (size_t vi = 0; vi < e.variants.size() && vi < 16; ++vi) {
+                            const auto& v = e.variants[vi];
+                            cerr << "    var[" << vi << "] x=" << v.x << " y=" << v.y
+                                 << " score=" << v.score << " mfe=" << v.mfe << " cai=" << v.cai
+                                 << " manner=" << v.backtrace_type << "\n";
+                        }
+                    }
+                }
+                cerr << "[DERNA_DUMP_C] done\n";
+            }
+        }
+
+        // DERNA_SCAN_M1_LEFT="left" — scan all M1 right positions for entries with given left.
+        if (const char* env_sm = std::getenv("DERNA_SCAN_M1_LEFT")) {
+            int target_left;
+            if (sscanf(env_sm, "%d", &target_left) == 1) {
+                int nuc_len = 3*n;
+                static const char to_ch[4] = {'A','C','G','U'};
+                cerr << "[DERNA_SCAN_M1_LEFT] target_left=" << target_left << "\n";
+                int seen = 0;
+                for (int rp = 0; rp < (int)tables.bestM1.size() && rp < nuc_len; ++rp) {
+                    for (auto& kv : tables.bestM1[rp]) {
+                        int key = kv.first;
+                        int left_pos = key >> 4;
+                        if (left_pos != target_left) continue;
+                        int nuc_R = key & 3, nuc_L = (key >> 2) & 3;
+                        const auto& e = kv.second;
+                        cerr << "  M1[" << left_pos << "," << rp << "] (nL=" << to_ch[nuc_L]
+                             << ",nR=" << to_ch[nuc_R] << ") mfe=" << e.mfe
+                             << " manner=" << e.backtrace_type
+                             << " bt_size=" << e.bt_info.size() << "\n";
+                        if (++seen >= 50) { cerr << "  ...truncated\n"; break; }
+                    }
+                    if (seen >= 50) break;
+                }
+                cerr << "[DERNA_SCAN_M1_LEFT] done (" << seen << ")\n";
+            }
+        }
+
+        // DERNA_DUMP_MULTI="left_lo,left_hi,right_lo,right_hi" — dump Multi/M1/M2 entries.
+        if (const char* env_m = std::getenv("DERNA_DUMP_MULTI")) {
+            int ll, lh, rl, rh;
+            if (sscanf(env_m, "%d,%d,%d,%d", &ll, &lh, &rl, &rh) == 4) {
+                int nuc_len = 3 * n;
+                static const char to_ch[4] = {'A','C','G','U'};
+                auto dump_table = [&](const char* label, const std::vector<DernaBeamMap>& tab) {
+                    cerr << "[DERNA_DUMP_" << label << "] left in [" << ll << "," << lh
+                         << "] right in [" << rl << "," << rh << "]\n";
+                    for (int rp = rl; rp <= rh && rp < (int)tab.size(); ++rp) {
+                        for (auto& kv : tab[rp]) {
+                            int key = kv.first;
+                            int nuc_R = key & 3;
+                            int nuc_L = (key >> 2) & 3;
+                            int left_pos = key >> 4;
+                            if (left_pos < ll || left_pos > lh) continue;
+                            const auto& e = kv.second;
+                            cerr << "  " << label << "[" << left_pos << "," << rp << "]"
+                                 << " (nL=" << to_ch[nuc_L] << ",nR=" << to_ch[nuc_R] << ")"
+                                 << " score=" << e.score << " mfe=" << e.mfe << " cai=" << e.cai
+                                 << " manner=" << e.backtrace_type
+                                 << " nVar=" << e.variants.size() << "\n";
+                        }
+                    }
+                    (void)nuc_len;
+                };
+                dump_table("MULTI", tables.bestMulti);
+                dump_table("M1",    tables.bestM1);
+                dump_table("M2",    tables.bestM2);
+                cerr << "[DERNA_DUMP_MULTI] table sizes:";
+                for (int rp = rl; rp <= rh && rp < (int)tables.bestM1.size(); ++rp) {
+                    cerr << " M1[" << rp << "]=" << tables.bestM1[rp].size()
+                         << " M2[" << rp << "]=" << tables.bestM2[rp].size()
+                         << " Multi[" << rp << "]=" << tables.bestMulti[rp].size();
+                }
+                cerr << "\n[DERNA_DUMP_MULTI] done\n";
+            }
+        }
+
+        // DERNA_DUMP_F="pos1,pos2" — dump tab_f[pos1] and tab_f[pos2] entries.
+        if (const char* env_f = std::getenv("DERNA_DUMP_F")) {
+            int p1=-1,p2=-1;
+            int n_parsed = sscanf(env_f, "%d,%d", &p1, &p2);
+            (void)n_parsed;
+            int nuc_len = 3*n;
+            static const char to_ch[4] = {'A','C','G','U'};
+            for (int pp : {p1, p2}) {
+                if (pp < 0 || pp >= (int)tables.bestF.size()) continue;
+                cerr << "[DERNA_DUMP_F] tab_f[" << pp << "] (" << tables.bestF[pp].size() << " entries)\n";
+                int shown = 0;
+                for (auto& kv : tables.bestF[pp]) {
+                    int key = kv.first;
+                    int nuc_R = key & 3;
+                    int nuc_L = (key >> 2) & 3;
+                    int left_pos = key >> 4;
+                    const auto& e = kv.second;
+                    cerr << "  F left=" << left_pos << " (nL=" << to_ch[nuc_L] << ",nR=" << to_ch[nuc_R] << ")"
+                         << " score=" << e.score << " mfe=" << e.mfe << " cai=" << e.cai
+                         << " manner=" << e.backtrace_type << " a=" << e.a << " b=" << e.b
+                         << " i=" << (int)e.i << " j=" << (int)e.j << " nVar=" << e.variants.size() << "\n";
+                    if (++shown >= 20) { cerr << "  ... (" << (tables.bestF[pp].size()-20) << " more)\n"; break; }
+                }
+                (void)nuc_len;
+            }
+            cerr << "[DERNA_DUMP_F] done\n";
+        }
+
         vector<int> nucle_seq, codon_selection;
         vector<bond> bp_bond;
         traceback_position_beam_tables(tables, n, protein, nucle_seq, codon_selection, bp_bond);

@@ -25,6 +25,10 @@ class Zuker {
     vector<int> protein, nucle_seq, basepair;
     vector<int> start_index, index_offset;
     vector<int> ava_nucle_p, ava_nucle_m, codon_selection;
+    // Per-protein-position CAI cache: protein_cai[p*6 + x] = codon_cai[protein[p]][x].
+    // Eliminates a level of pointer indirection (vector<int>::operator[] on protein[])
+    // on every add_CAI / add_*_CAI_* call inside the hot DP loops.
+    vector<double> protein_cai;
     vector<bond> bp_bond;
     vector<stack_> sector;
     vector<vector<int>> O_bt, E_bt, M_bt, TM_bt;
