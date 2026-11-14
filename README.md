@@ -87,8 +87,8 @@ make
 -r - <input rna file path>
 -O - <sweep output csv file name>
 -g - <[0,inf)>
--t - threshold tau <(0,1)>
--p - threshold tau2 <(0,1)>
+-t - threshold tau <(0,1)>, sweep resolution in lambda (default 0.0025)
+-p - threshold tau2 <(0,1)>, finer sweep resolution used where lambda < tau (default 0.00075)
 -c - <codon usage table file path>
 -d - <energy parameters (model) directory>
 ```
@@ -135,6 +135,8 @@ Minimum Free Energy: -148.7
 ```
 
 #### Sweep (default thresholds) 
+
+The sweep bisects lambda intervals whose endpoints differ in both CAI and MFE, and stops splitting an interval once its width is below a tolerance. `-t` (tau, default 0.0025) is that tolerance; `-p` (tau2, default 0.00075) replaces it for intervals whose right end is below tau, giving a finer grid near lambda = 0. Both defaults are fixed constants and do not depend on the sequence length.
 
 `./derna -i ../data/uniprotSeq/P15421.fasta -o P15421_sweep.txt -O P15421_sweep -m 1 -s 3`
 
